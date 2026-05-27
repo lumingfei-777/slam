@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>08 - 三角化</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #0f0f1a; color: #e0e0e0; }
+#container { max-width: 1000px; margin: 0 auto; padding: 30px 20px; }
+h1 { color: #60a5fa; text-align: center; margin-bottom: 6px; }
+.sub { color: #94a3b8; text-align: center; margin-bottom: 24px; }
+.scene-wrap { background: #1a1a35; border-radius: 16px; padding: 20px; margin-bottom: 16px; }
+.scene-wrap canvas { width: 100%; aspect-ratio: 4/3; display: block; background: #0f0f1a; border-radius: 8px; }
+.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.ctrl { background: #252550; border-radius: 12px; padding: 16px; }
+.ctrl h4 { color: #a78bfa; font-size: 0.85em; margin-bottom: 8px; }
+.slider-box { display: flex; align-items: center; gap: 10px; font-size: 0.85em; }
+.slider-box input { flex: 1; accent-color: #60a5fa; }
+.slider-box .val { min-width: 36px; text-align: right; font-family: monospace; }
+.info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.card { background: #252550; border-radius: 12px; padding: 16px; text-align: center; }
+.card .num { font-size: 1.5em; font-weight: bold; color: #fbbf24; }
+.card .lbl { font-size: 0.8em; color: #94a3b8; margin-top: 4px; }
+.explanation { background: #1a1a35; border-radius: 16px; padding: 24px; margin-top: 20px; line-height: 1.9; font-size: 0.92em; }
+.hl { color: #fbbf24; }
+</style>
+</head>
+<body>
+<div id="container">
+<h1>📐 三角化</h1>
+<div class="sub">两个视角 → 恢复 3D 点</div>
+
+<div class="scene-wrap">
+<canvas id="triCanvas"></canvas>
+</div>
+
+<div class="controls">
+<div class="ctrl">
+<h4>👁️ 视差（视角差）</h4>
+<div class="slider-box"><span>小</span><input type="range" id="parallax" min="2" max="40" value="12" step="1"><span class="val" id="parallaxv">12°</span><span>大</span></div>
+</div>
+<div class="ctrl">
+<h4>📏 真实距离</h4>
+<div class="slider-box"><span>近</span><input type="range" id="trueDist" min="1" max="10" value="5" step="0.5"><span class="val" id="trueDistv">5.0m</span><span>远</span></div>
+</div>
+</div>
+
+<div class="info-grid">
+<div class="card"><div class="num" id="estDist">0</div><div class="lbl">估计距离 (m)</div></div>
+<div class="card"><div class="num" id="errorDist">0</div><div class="lbl">误差 (±m)</div></div>
+<div class="card"><div class="num" id="errorPct">0%</div><div class="lbl">误差率</div></div>
+</div>
+
+<div class="explanation">
+<strong>💡 核心洞察</strong><br><br>
+三角化的精度取决于 <span class="hl">视差</span>（两个视角的夹角）：<br><br>
+<div style="text-align:center;font-family:monospace;font-size:1.1em;background:#0f0f1a;border-radius:8px;padding:12px;margin:10px 0;">
+σ_Z = Z² / (f × B) × σ_d
+</div>
+Z = 深度 &nbsp; f = 焦距 &nbsp; B = 基线 &nbsp; σ_d = 匹配误差（像素）<br><br>
+<span class="hl">物体越远 → 误差以平方增长！</span><br>
+<span class="hl">视差越大 → 三角化越准</span><br>
+<span class="hl">基线越长 → 精度越高</span>
+</div>
+</div>
+
+<script>
+const canvas = document.getElementById('triCanvas');
+const ctx = canvas.getContext('2d');
+const rect = canvas.parentElement.getBoundingClientRect();
+canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+
+function draw() {
+    const w = canvas.width / (window.devicePixelRatio || 1);
+    const h = canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0f0f1a'; ctx.fillRect(0, 0, w, h);
+
+    const parallax = parseFloat(document.getElementById('parallax').value);
+    const trueDist = parseFloat(document.getElementById('trueDist').value);
+    document.getElementById('parallaxv').textContent = parallax + '°';
+    document.getElementById('trueDistv').textContent = trueDist.toFixed(1) + 'm';
+
+    // Simulate triangulation
+    const baseline = 95; // mm
+    const focal = 600;
+    const dist_mm = trueDist * 1000;
+    const disparity = focal * baseline / dist_mm;
+
+    // Add noise: 0.5 pixel disparity noise
+    const noisePx = 0.5;
+    const depthErr = dist_mm * dist_mm / (focal * baseline) * noisePx;
+    const estDistMin = dist_mm - depthErr;
+    const estDistMax = dist_mm + depthErr;
+
+    document.getElementById('estDist').textContent = (dist_mm / 1000).toFixed(2);
+    document.getElementById('errorDist').textContent = (depthErr / 1000).toFixed(2);
+    document.getElementById('errorPct').textContent = (depthErr / dist_mm * 100).toFixed(1);
+
+    // Visualization
+    const cx = w / 2;
+    const cy = h * 0.7;
+
+    // Scale: map distance to canvas
+    const maxDist = 15000;
+    const scaleY = (h * 0.5) / maxDist;
+
+    // Draw camera positions at bottom
+    const halfBase = Math.min(baseline * 2, w * 0.2);
+    const camY = cy;
+
+    function drawCam(x, label, color) {
+        ctx.fillStyle = color;
+        ctx.fillRect(x - 8, camY - 12, 16, 24);
+        ctx.fillStyle = '#fff';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x, camY + 20);
+    }
+
+    drawCam(cx - halfBase, '左', '#60a5fa');
+    drawCam(cx + halfBase, '右', '#60a5fa');
+
+    // Baseline line
+    ctx.strokeStyle = '#4a4a7a';
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(cx - halfBase, camY + 14); ctx.lineTo(cx + halfBase, camY + 14); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`基线 = ${baseline}mm`, cx, camY + 30);
+
+    // True point position
+    const trueY = camY - dist_mm * scaleY;
+    const parallaxRad = parallax * Math.PI / 180;
+    const rayAngle = parallaxRad / 2;
+    const rayLen = dist_mm * scaleY;
+
+    // Draw uncertainty cone
+    const noiseAngle = Math.atan2(baseline/2, dist_mm);
+    const errAngle = noisePx / focal; // rad
+
+    // Uncertainty range (shaded area)
+    ctx.fillStyle = '#ff6b6b20';
+    // Left ray uncertainty
+    const lx1 = cx - halfBase, lx2 = cx - halfBase;
+    const ly1 = camY, ly2 = camY - (dist_mm + depthErr) * scaleY;
+    // Right ray uncertainty
+    const rx1 = cx + halfBase, rx2 = cx + halfBase;
+    const ry1 = camY, ry2 = camY - (dist_mm + depthErr) * scaleY;
+
+    // Uncertainty cone - simplified as rectangle
+    const errTop = depthErr * scaleY;
+    ctx.fillStyle = '#ff6b6b30';
+    ctx.fillRect(cx - 10, trueY - errTop, 20, errTop * 2);
+
+    // Confidence interval lines
+    ctx.strokeStyle = '#ff6b6b';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(cx - 30, trueY - errTop); ctx.lineTo(cx + 30, trueY - errTop); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx - 30, trueY + errTop); ctx.lineTo(cx + 30, trueY + errTop); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Draw rays from left camera
+    ctx.strokeStyle = '#ff6b6b';
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.3;
+    ctx.beginPath(); ctx.moveTo(cx - halfBase, camY); ctx.lineTo(cx, trueY); ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Rays from right camera
+    ctx.strokeStyle = '#51cf66';
+    ctx.globalAlpha = 0.3;
+    ctx.beginPath(); ctx.moveTo(cx + halfBase, camY); ctx.lineTo(cx, trueY); ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // True point
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath(); ctx.arc(cx, trueY, 8, 0, 2 * Math.PI); ctx.fill();
+
+    // Distance label
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${trueDist.toFixed(1)}m`, cx, trueY - 18);
+
+    // Error label
+    ctx.fillStyle = '#ff6b6b';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`±${(depthErr/1000).toFixed(2)}m`, cx, trueY + errTop + 16);
+
+    // Parallax angle arc
+    ctx.strokeStyle = '#a78bfa';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, camY, 40, -Math.PI/2 - parallaxRad/2, -Math.PI/2 + parallaxRad/2);
+    ctx.stroke();
+    ctx.fillStyle = '#a78bfa';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`视差 ${parallax}°`, cx + 55, camY - 20);
+
+    // Depth error equation
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`σ_Z = Z²/(f·B) × σ_d`, 12, 16);
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillText(`= ${(dist_mm/1000).toFixed(1)}²/(${focal}×${baseline}) × ${noisePx}`, 12, 32);
+    ctx.fillStyle = '#ff6b6b';
+    ctx.fillText(`= ±${(depthErr/1000).toFixed(2)}m`, 12, 48);
+}
+
+document.getElementById('parallax').oninput = function() {
+    document.getElementById('parallaxv').textContent = this.value + '°';
+    draw();
+};
+document.getElementById('trueDist').oninput = function() {
+    document.getElementById('trueDistv').textContent = parseFloat(this.value).toFixed(1) + 'm';
+    draw();
+};
+draw();
+
+window.addEventListener('resize', () => {
+    const r = canvas.parentElement.getBoundingClientRect();
+    canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+    canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+    draw();
+});
+</script>
+</body>
+</html>

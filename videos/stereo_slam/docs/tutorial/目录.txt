@@ -1,0 +1,11 @@
+docs/tutorial/
+├── 00_index.md                  # 总目录与学习路线
+├── 01_linear_algebra.md         # 线性代数（向量→SVD）
+├── 02_probability_optimization.md # 概率统计 + 优化
+├── 03_python_numpy.md           # Python + NumPy
+├── 04_opencv_visualize.md       # OpenCV + 可视化
+├── 05_camera_geometry.md        # 相机模型 + 多视图几何
+├── 06_features_matching.md      # 特征提取与匹配
+├── 07_slam_frontend.md          # SLAM 前端（PnP、三角化、跟踪）
+├── 08_slam_backend.md           # SLAM 后端（BA、闭环、架构）
+└── 09_implementation.md         # 动手实践（7步从0搭建）

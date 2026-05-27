@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>03 - 坐标变换</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #0f0f1a; color: #e0e0e0; overflow: hidden; height: 100vh; }
+#container { display: flex; height: 100vh; }
+#canvas-wrap { flex: 1; position: relative; }
+#panel { width: 400px; background: #1a1a35; padding: 28px; overflow-y: auto; border-left: 1px solid #2d2d5e; }
+#panel h2 { color: #60a5fa; }
+#panel .sub { color: #94a3b8; font-size: 0.9em; margin-bottom: 20px; }
+.ctrl { background: #252550; border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+.ctrl h4 { color: #a78bfa; font-size: 0.85em; margin-bottom: 8px; }
+.slider-box { display: flex; align-items: center; gap: 10px; font-size: 0.85em; margin-bottom: 6px; }
+.slider-box input[type=range] { flex: 1; accent-color: #60a5fa; }
+.slider-box .val { min-width: 36px; text-align: right; font-family: monospace; }
+.formula-box { background: #0f0f1a; border-radius: 8px; padding: 12px; font-family: monospace; text-align: center; margin-top: 8px; line-height: 1.8; }
+.info-box { background: #252550; border-radius: 12px; padding: 16px; font-size: 0.85em; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div id="container">
+<div id="canvas-wrap"></div>
+<div id="panel">
+<h2>🏗️ 坐标变换</h2>
+<div class="sub">世界坐标 ↔ 相机坐标：旋转 + 平移</div>
+
+<div class="ctrl">
+<h4>📏 平移 (mm)</h4>
+<div class="slider-box"><span style="color:#ff6b6b">X</span><input type="range" id="tx" min="-3" max="3" value="1" step="0.1"><span class="val" id="txv">1.0</span></div>
+<div class="slider-box"><span style="color:#51cf66">Y</span><input type="range" id="ty" min="-3" max="3" value="0.5" step="0.1"><span class="val" id="tyv">0.5</span></div>
+<div class="slider-box"><span style="color:#4dabf7">Z</span><input type="range" id="tz" min="-3" max="3" value="2" step="0.1"><span class="val" id="tzv">2.0</span></div>
+</div>
+
+<div class="ctrl">
+<h4>🔄 旋转 (度)</h4>
+<div class="slider-box"><span style="color:#ff6b6b">俯仰</span><input type="range" id="rotX" min="-90" max="90" value="20" step="1"><span class="val" id="rotXv">20°</span></div>
+<div class="slider-box"><span style="color:#51cf66">偏航</span><input type="range" id="rotY" min="-90" max="90" value="-15" step="1"><span class="val" id="rotYv">-15°</span></div>
+</div>
+
+<div class="formula-box">
+<span style="color:#94a3b8;font-size:0.85em;">P<sub>cam</sub> = R × P<sub>world</sub> + t</span>
+</div>
+
+<div class="info-box">
+<strong>💡 操作说明</strong><br>
+🟦 蓝色原点 = 世界坐标系<br>
+🟨 金色相机 = 相机坐标系<br>
+🟢 绿色点 = 变换后的点<br>
+<br>
+调整平移和旋转，观察点的位置变化
+</div>
+</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const panel = document.getElementById('canvas-wrap');
+const w = panel.clientWidth, h = panel.clientHeight;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f0f1a);
+const camera = new THREE.PerspectiveCamera(45, w/h, 0.1, 30);
+camera.position.set(6, 5, 8);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(w, h);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+panel.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 0, 0);
+
+const grid = new THREE.GridHelper(10, 10, 0x4a4a7a, 0x2d2d5e);
+scene.add(grid);
+const axes = new THREE.AxesHelper(4);
+scene.add(axes);
+
+// World frame label
+function makeLabel(text, pos, color) {
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+    const cx = c.getContext('2d');
+    cx.fillStyle = color; cx.font = 'bold 36px Arial'; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+    cx.fillText(text, 32, 32);
+    const tex = new THREE.CanvasTexture(c);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.copy(pos); sprite.scale.set(1, 1, 1);
+    scene.add(sprite);
+}
+makeLabel('W', new THREE.Vector3(4.5, 0, 0), '#ffffff');
+
+// World point
+const worldPoint = new THREE.Vector3(1.5, 1, 1.5);
+const sphereGeo = new THREE.SphereGeometry(0.12, 16, 16);
+const worldMat = new THREE.MeshBasicMaterial({ color: 0x4dabf7 });
+const worldMesh = new THREE.Mesh(sphereGeo, worldMat);
+worldMesh.position.copy(worldPoint);
+scene.add(worldMesh);
+
+const worldLabel = makeLabel('P_w', new THREE.Vector3(1.5, 1.3, 1.5), '#4dabf7');
+
+// Camera frame group
+const camGroup = new THREE.Group();
+const camBody = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.3, 0.8), new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));
+camBody.position.set(0, 0, 0.4);
+camGroup.add(camBody);
+const camLens = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 0.3, 8), new THREE.MeshBasicMaterial({ color: 0x60a5fa }));
+camLens.rotation.x = Math.PI/2; camLens.position.set(0, 0, 0.9);
+camGroup.add(camLens);
+
+// Camera local axes
+const axLen = 0.8;
+const aRed = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), axLen, 0xff6b6b, 0.2, 0.1);
+const aGreen = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), axLen, 0x51cf66, 0.2, 0.1);
+const aBlue = new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), axLen, 0x4dabf7, 0.2, 0.1);
+camGroup.add(aRed); camGroup.add(aGreen); camGroup.add(aBlue);
+scene.add(camGroup);
+
+// Transformed point (in world coords)
+const tfMat = new THREE.MeshBasicMaterial({ color: 0x51cf66 });
+const tfMesh = new THREE.Mesh(sphereGeo.clone(), tfMat);
+scene.add(tfMesh);
+
+// Line from world to transformed
+const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.2 });
+const lineGeo = new THREE.BufferGeometry();
+const linePos = new Float32Array(6);
+lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
+const line = new THREE.Line(lineGeo, lineMat);
+scene.add(line);
+
+function update() {
+    const tx = parseFloat(document.getElementById('tx').value);
+    const ty = parseFloat(document.getElementById('ty').value);
+    const tz = parseFloat(document.getElementById('tz').value);
+    const rx = parseFloat(document.getElementById('rotX').value) * Math.PI / 180;
+    const ry = parseFloat(document.getElementById('rotY').value) * Math.PI / 180;
+
+    document.getElementById('txv').textContent = tx.toFixed(1);
+    document.getElementById('tyv').textContent = ty.toFixed(1);
+    document.getElementById('tzv').textContent = tz.toFixed(1);
+    document.getElementById('rotXv').textContent = document.getElementById('rotX').value + '°';
+    document.getElementById('rotYv').textContent = document.getElementById('rotY').value + '°';
+
+    // Camera pose
+    camGroup.position.set(tx, ty, tz);
+    camGroup.rotation.set(rx, ry, 0, 'YXZ');
+
+    // Transform world point to camera frame
+    const pw = worldPoint.clone();
+    const pc = pw.clone();
+    // Inverse rotation: apply to point
+    const euler = new THREE.Euler(rx, ry, 0, 'YXZ');
+    const q = new THREE.Quaternion().setFromEuler(euler);
+    const qInv = q.clone().invert();
+    pc.applyQuaternion(qInv);
+    pc.sub(new THREE.Vector3(tx, ty, tz));
+
+    // Transformed point in world coordinates = inverse transform of camera
+    // Camera at (tx,ty,tz) looking in direction of rotation
+    // A point at pc in camera frame is at pw in world
+    const tfPoint = new THREE.Vector3(tx, ty, tz);
+    // Apply rotation to point in camera frame
+    const pCam = new THREE.Vector3(1.5, 1, 1.5); // the point in camera coordinates (like world point in camera view)
+    pCam.applyQuaternion(q);
+    pCam.add(new THREE.Vector3(tx, ty, tz));
+
+    // Actually: P_world = R⁻¹ × P_cam - R⁻¹ × t ≈ P_cam in camera frame
+    // Simpler: show the world point in camera coordinates
+    // For visualization, show the world point and where it appears in camera frame
+    tfMesh.position.set(pc.x, pc.y, pc.z);
+
+    // Line connecting world point to camera origin
+    const pos = line.geometry.attributes.position.array;
+    pos[0] = worldPoint.x; pos[1] = worldPoint.y; pos[2] = worldPoint.z;
+    pos[3] = tx; pos[4] = ty; pos[5] = tz;
+    line.geometry.attributes.position.needsUpdate = true;
+}
+
+['tx','ty','tz','rotX','rotY'].forEach(id => document.getElementById(id).oninput = update);
+update();
+
+function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+    const w2 = panel.clientWidth, h2 = panel.clientHeight;
+    camera.aspect = w2/h2; camera.updateProjectionMatrix();
+    renderer.setSize(w2, h2);
+});
+</script>
+</body>
+</html>

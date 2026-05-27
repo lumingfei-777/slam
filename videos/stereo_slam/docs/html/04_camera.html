@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>04 - 相机投影</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #0f0f1a; color: #e0e0e0; overflow: hidden; height: 100vh; }
+#container { display: flex; height: 100vh; }
+#canvas-wrap { flex: 1; position: relative; }
+#panel { width: 400px; background: #1a1a35; padding: 28px; overflow-y: auto; border-left: 1px solid #2d2d5e; }
+#panel h2 { color: #60a5fa; }
+#panel .sub { color: #94a3b8; font-size: 0.9em; margin-bottom: 20px; }
+.ctrl { background: #252550; border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+.ctrl h4 { color: #a78bfa; font-size: 0.85em; margin-bottom: 8px; }
+.slider-box { display: flex; align-items: center; gap: 10px; font-size: 0.85em; }
+.slider-box input[type=range] { flex: 1; accent-color: #60a5fa; }
+.slider-box .val { min-width: 40px; text-align: right; font-family: monospace; }
+.canvas2d { background: #0f0f1a; border-radius: 8px; width: 100%; aspect-ratio: 4/3; border: 1px solid #2d2d5e; margin-top: 8px; }
+.info-box { background: #252550; border-radius: 12px; padding: 16px; font-size: 0.85em; line-height: 1.8; margin-top: 14px; }
+.info-box .hl { color: #fbbf24; }
+</style>
+</head>
+<body>
+<div id="container">
+<div id="canvas-wrap"></div>
+<div id="panel">
+<h2>📷 相机投影</h2>
+<div class="sub">3D 世界 → 2D 图像：针孔相机模型</div>
+
+<div class="ctrl">
+<h4>📏 焦距 f</h4>
+<div class="slider-box"><span style="color:#ff6b6b">短焦</span><input type="range" id="focal" min="200" max="1500" value="600" step="10"><span class="val" id="focalv">600</span><span style="color:#4dabf7">长焦</span></div>
+</div>
+
+<div class="ctrl">
+<h4>📐 视角</h4>
+<div class="slider-box"><span style="color:#ff6b6b">俯视</span><input type="range" id="elevation" min="10" max="80" value="30" step="1"><span class="val" id="elevationv">30°</span></div>
+</div>
+
+<canvas class="canvas2d" id="projectionCanvas"></canvas>
+
+<div class="info-box">
+<strong>💡 核心公式</strong><br>
+u = fx × <span class="hl">X / Z</span> + cx<br>
+v = fy × <span class="hl">Y / Z</span> + cy<br><br>
+<strong>除以 Z = 近大远小</strong><br>
+焦距越大 → 图像越大 → 视场角越小
+</div>
+</div>
+</div>
+
+<script>
+const canvas = document.getElementById('projectionCanvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+    canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+}
+resizeCanvas();
+
+// 3D points of a house (in world coordinates)
+const housePoints3D = [
+    // Base
+    [-1.5, 0, 3], [1.5, 0, 3], [1.5, 0, 6], [-1.5, 0, 6],
+    // Top
+    [-1.5, 2, 3], [1.5, 2, 3], [1.5, 2, 6], [-1.5, 2, 6],
+    // Roof
+    [0, 3.5, 3], [0, 3.5, 6],
+    // Door
+    [-0.4, 0, 2.5], [0.4, 0, 2.5], [0.4, 1.2, 2.5], [-0.4, 1.2, 2.5],
+    // Tree
+    [-2, 0, 5], [-1.8, 1.5, 5], [-2.2, 1.5, 5],
+    [-1.8, 0, 3.5], [-1.8, 1.5, 3.5],
+];
+
+const houseEdges = [
+    [0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],
+    [0,4],[1,5],[2,6],[3,7],
+    [4,8],[5,8],[6,9],[7,9],[8,9],
+    [10,11],[11,12],[12,13],[13,10],
+    [14,15],[15,16],[16,14],
+];
+
+function project3DTo2D(pt, focal, w, h) {
+    const f = focal;
+    const cx = w / 2;
+    const cy = h / 2;
+    const X = pt[0], Y = pt[1], Z = pt[2];
+    if (Z <= 0) return null;
+    const u = f * X / Z + cx;
+    const v = h - (f * Y / Z + cy); // flip Y for screen
+    return [u, v];
+}
+
+function draw() {
+    const w = canvas.width / (window.devicePixelRatio || 1);
+    const h = canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = '#0f0f1a';
+    ctx.fillRect(0, 0, w, h);
+
+    const focal = parseFloat(document.getElementById('focal').value);
+    document.getElementById('focalv').textContent = focal;
+
+    // Project all points
+    const projected = housePoints3D.map(p => project3DTo2D(p, focal, w, h));
+
+    // Draw edges
+    ctx.strokeStyle = '#4a4a7a';
+    ctx.lineWidth = 1;
+    for (const [i, j] of houseEdges) {
+        const p1 = projected[i], p2 = projected[j];
+        if (p1 && p2) {
+            ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
+        }
+    }
+
+    // Draw points with depth-based color
+    for (let i = 0; i < projected.length; i++) {
+        const p = projected[i];
+        if (!p) continue;
+        const Z = housePoints3D[i][2];
+        const depth = Math.min(Math.max((Z - 2) / 5, 0), 1);
+        const r = Math.round(255 * (1 - depth));
+        const g = Math.round(100);
+        const b = Math.round(255 * depth);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.beginPath(); ctx.arc(p[0], p[1], 5, 0, 2*Math.PI); ctx.fill();
+    }
+
+    // Draw info
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(`焦距: ${focal}px`, 12, 20);
+    ctx.fillText('近处 = 红色, 远处 = 蓝色', 12, 38);
+    ctx.fillText('🖱 拖拽 3D 场景旋转视角', 12, 56);
+}
+
+document.getElementById('focal').oninput = draw;
+window.addEventListener('resize', () => { resizeCanvas(); draw(); });
+
+// Three.js 3D scene
+const panel = document.getElementById('canvas-wrap');
+const w3d = panel.clientWidth, h3d = panel.clientHeight;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f0f1a);
+const cam3d = new THREE.PerspectiveCamera(40, w3d/h3d, 0.1, 50);
+cam3d.position.set(6, 5, 8);
+cam3d.lookAt(0, 1, 4.5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(w3d, h3d);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+panel.appendChild(renderer.domElement);
+
+const orbit = new THREE.OrbitControls(cam3d, renderer.domElement);
+orbit.enableDamping = true;
+orbit.target.set(0, 1, 4.5);
+
+// Grid
+const grid3d = new THREE.GridHelper(10, 10, 0x4a4a7a, 0x2d2d5e);
+scene.add(grid3d);
+
+// Camera frustum visualization
+function updateScene() {
+    // Remove old frustum helper if any
+    const old = scene.getObjectByName('frustum');
+    if (old) scene.remove(old);
+
+    const focal = parseFloat(document.getElementById('focal').value);
+    const fov = 2 * Math.atan(4 / (2 * focal)) * 180 / Math.PI; // sensor height ~4 units
+    const near = 2, far = 8;
+    const aspect = w3d/h3d;
+
+    const frustum = new THREE.FrustumGeometry(new THREE.PerspectiveCamera(fov * aspect * 0.9, 1/aspect, near, far));
+    // Just use camera helper instead
+    // Cleaner: use a helper
+}
+// Simplified: show camera position as a cone
+
+// House 3D
+const houseGroup = new THREE.Group();
+const wallMat = new THREE.MeshBasicMaterial({ color: 0x4a4a7a, transparent: true, opacity: 0.3, side: THREE.DoubleSide });
+
+// Floor
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(3, 3), wallMat);
+floor.rotation.x = -Math.PI/2; floor.position.set(0, 0, 4.5);
+houseGroup.add(floor);
+
+// Walls
+function addWall(pts, color=0x4a4a7a) {
+    const shape = new THREE.Shape();
+    shape.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], pts[i][1]);
+    const geo = new THREE.ShapeGeometry(shape);
+    const mat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.6 });
+    const mesh = new THREE.Mesh(geo, mat);
+    return mesh;
+}
+
+// Front wall
+const fw = addWall([[-1.5,0],[1.5,0],[1.5,2],[-1.5,2]], 0x60a5fa);
+fw.position.set(0, 0, 3);
+houseGroup.add(fw);
+// Back wall
+const bw = addWall([[-1.5,0],[1.5,0],[1.5,2],[-1.5,2]], 0x4a4a7a);
+bw.position.set(0, 0, 6);
+houseGroup.add(bw);
+// Left wall
+const lw = addWall([[0,0],[0,2],[3,2],[3,0]], 0x4a4a7a);
+lw.rotation.y = Math.PI/2; lw.position.set(-1.5, 0, 3);
+houseGroup.add(lw);
+// Right wall
+const rw = addWall([[0,0],[0,2],[3,2],[3,0]], 0x4a4a7a);
+rw.rotation.y = Math.PI/2; rw.position.set(1.5, 0, 3);
+houseGroup.add(rw);
+// Roof
+const roofMat = new THREE.MeshBasicMaterial({ color: 0xa78bfa, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+const roof = new THREE.Mesh(new THREE.BufferGeometry(), roofMat);
+const roofVert = new Float32Array([-1.5,2,3, 1.5,2,3, 0,3.5,3,  1.5,2,6, -1.5,2,6, 0,3.5,6,  -1.5,2,3, 1.5,2,3, 1.5,2,6, -1.5,2,6]);
+const roofIdx = [0,1,2, 3,4,5, 0,2,5, 0,5,4, 1,3,2, 2,3,5];
+roof.geometry.setAttribute('position', new THREE.BufferAttribute(roofVert, 3));
+roof.geometry.setIndex(roofIdx);
+roof.geometry.computeVertexNormals();
+houseGroup.add(roof);
+
+// Floor
+const floorG = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), new THREE.MeshBasicMaterial({ color: 0x2d2d5e, side: THREE.DoubleSide, transparent: true, opacity: 0.2 }));
+floorG.rotation.x = -Math.PI/2; floorG.position.set(0, -0.01, 4.5);
+houseGroup.add(floorG);
+
+scene.add(houseGroup);
+
+// Camera indicator
+const camGroup = new THREE.Group();
+const camBody = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.8), new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));
+camBody.position.set(0, 0, 0.4);
+camGroup.add(camBody);
+const camLens = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.2, 0.3, 8), new THREE.MeshBasicMaterial({ color: 0x60a5fa }));
+camLens.rotation.x = Math.PI/2; camLens.position.set(0, 0, 0.9);
+camGroup.add(camLens);
+camGroup.position.set(0, 1, -1);
+scene.add(camGroup);
+
+// Points in 3D scene
+const dotMat = new THREE.PointsMaterial({ color: 0xfbbf24, size: 0.15 });
+const dotGeo = new THREE.BufferGeometry();
+const dotPos = new Float32Array(housePoints3D.flat());
+dotGeo.setAttribute('position', new THREE.BufferAttribute(dotPos, 3));
+const dotMesh = new THREE.Points(dotGeo, dotMat);
+scene.add(dotMesh);
+
+// Rays from camera to points
+function updateRays() {
+    const oldRays = scene.getObjectByName('rays');
+    if (oldRays) scene.remove(oldRays);
+
+    const rayGroup = new THREE.Group();
+    rayGroup.name = 'rays';
+    const rayMat = new THREE.LineBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.15 });
+
+    for (const p of housePoints3D) {
+        const geom = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 1, -1),
+            new THREE.Vector3(p[0], p[1], p[2])
+        ]);
+        const line = new THREE.Line(geom, rayMat);
+        rayGroup.add(line);
+    }
+    scene.add(rayGroup);
+}
+updateRays();
+
+function render3d() {
+    requestAnimationFrame(render3d);
+    orbit.update();
+    renderer.render(scene, cam3d);
+}
+render3d();
+
+document.getElementById('elevation').oninput = () => {
+    const el = parseFloat(document.getElementById('elevation').value);
+    document.getElementById('elevationv').textContent = el + '°';
+    const r = el * Math.PI / 180;
+    cam3d.position.set(6 * Math.cos(r), 5 + 3 * Math.sin(r), 8 * Math.cos(r));
+    cam3d.lookAt(0, 1, 4.5);
+    orbit.target.set(0, 1, 4.5);
+};
+
+draw();
+
+window.addEventListener('resize', () => {
+    const w3 = panel.clientWidth, h3 = panel.clientHeight;
+    cam3d.aspect = w3/h3; cam3d.updateProjectionMatrix();
+    renderer.setSize(w3, h3);
+});
+</script>
+</body>
+</html>

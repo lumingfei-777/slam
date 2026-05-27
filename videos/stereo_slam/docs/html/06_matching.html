@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>06 - 特征匹配</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #0f0f1a; color: #e0e0e0; }
+#container { max-width: 1000px; margin: 0 auto; padding: 30px 20px; }
+h1 { color: #60a5fa; text-align: center; margin-bottom: 6px; }
+.sub { color: #94a3b8; text-align: center; margin-bottom: 24px; }
+.main-viz { background: #1a1a35; border-radius: 16px; padding: 20px; margin-bottom: 20px; }
+canvas { width: 100%; aspect-ratio: 2/1; display: block; background: #0f0f1a; border-radius: 8px; }
+.controls { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
+.ctrl { background: #252550; border-radius: 12px; padding: 16px; flex: 1; min-width: 200px; }
+.ctrl h4 { color: #a78bfa; font-size: 0.85em; margin-bottom: 8px; }
+.slider-box { display: flex; align-items: center; gap: 10px; font-size: 0.85em; }
+.slider-box input { flex: 1; accent-color: #60a5fa; }
+.slider-box .val { min-width: 36px; text-align: right; font-family: monospace; }
+.info-box { background: #252550; border-radius: 12px; padding: 16px; line-height: 1.8; font-size: 0.9em; }
+.info-box strong { color: #60a5fa; }
+.hl { color: #fbbf24; }
+</style>
+</head>
+<body>
+<div id="container">
+<h1>🔗 特征匹配</h1>
+<div class="sub">左右两张图 → 提取 ORB → 暴力匹配 → 比率测试</div>
+
+<div class="main-viz">
+<canvas id="matchCanvas"></canvas>
+</div>
+
+<div class="controls">
+<div class="ctrl">
+<h4>🎯 比率测试阈值</h4>
+<div class="slider-box"><span>严格</span><input type="range" id="ratio" min="0.3" max="1.0" value="0.75" step="0.05"><span class="val" id="ratiov">0.75</span><span>宽松</span></div>
+</div>
+<div class="ctrl">
+<h4>✅ 匹配结果</h4>
+<div style="color:#e0e0e0;font-size:0.9em;">
+总匹配: <span class="hl" id="totalMatch">0</span><br>
+好匹配: <span style="color:#51cf66" id="goodMatch">0</span><br>
+坏匹配: <span style="color:#ff6b6b" id="badMatch">0</span>
+</div>
+</div>
+</div>
+
+<div class="info-box">
+<strong>💡 比率测试原理</strong><br>
+对左图每个特征，在右图中找<span class="hl">最近邻 m</span> 和 <span class="hl">次近邻 n</span><br><br>
+m.distance < <span class="hl">threshold</span> × n.distance → <span style="color:#51cf66">✅ 保留</span>（唯一匹配）<br>
+m.distance ≥ <span class="hl">threshold</span> × n.distance → <span style="color:#ff6b6b">❌ 剔除</span>（模糊匹配）<br><br>
+阈值 <span class="hl">0.75</span> 是 ORB-SLAM 默认值。调大 → 更多匹配但可能误匹配；调小 → 更少匹配但更可靠。
+</div>
+</div>
+
+<script>
+const canvas = document.getElementById('matchCanvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+    const r = canvas.parentElement.getBoundingClientRect();
+    canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+    canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+}
+resize();
+
+// Generate fake features
+function makeFeatures(num, minX, maxX, minY, maxY, seed) {
+    const rng = (s) => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+    let s = seed;
+    const pts = [];
+    for (let i = 0; i < num; i++) {
+        s = rng(s * 100);
+        const x = minX + (maxX - minX) * s;
+        s = rng(s * 200);
+        const y = minY + (maxY - minY) * s;
+        s = rng(s * 300);
+        const angle = s * 360;
+        pts.push({ x, y, angle });
+    }
+    return pts;
+}
+
+function draw() {
+    const w = canvas.width / (window.devicePixelRatio || 1);
+    const h = canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0f0f1a'; ctx.fillRect(0, 0, w, h);
+
+    const ratio = parseFloat(document.getElementById('ratio').value);
+    document.getElementById('ratiov').textContent = ratio.toFixed(2);
+
+    const halfW = w / 2;
+    const numFeatures = 30;
+
+    // Generate left features
+    const leftPts = makeFeatures(numFeatures, 30, halfW - 30, 40, h - 40, 42);
+    // Generate right features (same positions + noise)
+    const rightPts = makeFeatures(numFeatures, 30, halfW - 30, 40, h - 40, 42);
+    // Add random noise to right positions
+    const rng2 = (() => { let s = 999; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; }; })();
+    for (let i = 0; i < rightPts.length; i++) {
+        rightPts[i].x += (rng2() - 0.5) * 30;
+        rightPts[i].y += (rng2() - 0.5) * 15;
+    }
+
+    // Compute "descriptor distances" (simulated)
+    const dists = [];
+    for (let i = 0; i < numFeatures; i++) {
+        const dx = leftPts[i].x - rightPts[i].x;
+        const dy = leftPts[i].y - rightPts[i].y;
+        const trueDist = Math.sqrt(dx*dx + dy*dy);
+        // Generate k=2 matches: m is true match, n is second best
+        const mDist = trueDist + rng2() * 5;
+        const nDist = mDist * (1.0 + rng2() * 1.5 + 0.3);
+        dists.push({ idx: i, mDist, nDist, trueDist });
+    }
+
+    // Draw images background
+    function drawImage(x, y, label) {
+        ctx.strokeStyle = '#2d2d5e';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, halfW - 20, h - 20);
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(x + 1, y + 1, halfW - 22, h - 22);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x + (halfW - 20)/2, y - 8);
+    }
+
+    const imgY = 20;
+    const imgH = h - 40;
+    drawImage(10, imgY, '左图');
+    drawImage(halfW + 10, imgY, '右图');
+
+    // Apply ratio test
+    let goodCount = 0, badCount = 0;
+    const goodPairs = [], badPairs = [];
+
+    for (const d of dists) {
+        const isGood = d.mDist < ratio * d.nDist;
+        if (isGood) { goodCount++; goodPairs.push(d); }
+        else { badCount++; badPairs.push(d); }
+    }
+
+    document.getElementById('totalMatch').textContent = dists.length;
+    document.getElementById('goodMatch').textContent = goodCount;
+    document.getElementById('badMatch').textContent = badCount;
+
+    // Draw bad matches first (so good ones are on top)
+    ctx.lineWidth = 1;
+    for (const d of badPairs) {
+        const l = leftPts[d.idx], r = rightPts[d.idx];
+        ctx.strokeStyle = '#ff6b6b40';
+        ctx.beginPath();
+        ctx.moveTo(l.x + 10, l.y + imgY);
+        ctx.lineTo(r.x + halfW + 10, r.y + imgY);
+        ctx.stroke();
+    }
+
+    for (const d of goodPairs) {
+        const l = leftPts[d.idx], r = rightPts[d.idx];
+        ctx.strokeStyle = '#51cf6660';
+        ctx.beginPath();
+        ctx.moveTo(l.x + 10, l.y + imgY);
+        ctx.lineTo(r.x + halfW + 10, r.y + imgY);
+        ctx.stroke();
+    }
+
+    // Draw keypoints
+    for (const p of leftPts) {
+        ctx.fillStyle = '#60a5fa';
+        ctx.beginPath(); ctx.arc(p.x + 10, p.y + imgY, 4, 0, 2 * Math.PI); ctx.fill();
+        // Draw cross
+        ctx.strokeStyle = '#60a5fa80';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(p.x + 6, p.y + imgY); ctx.lineTo(p.x + 14, p.y + imgY); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(p.x + 10, p.y + imgY - 4); ctx.lineTo(p.x + 10, p.y + imgY + 4); ctx.stroke();
+    }
+
+    for (const p of rightPts) {
+        ctx.fillStyle = '#a78bfa';
+        ctx.beginPath(); ctx.arc(p.x + halfW + 10, p.y + imgY, 4, 0, 2 * Math.PI); ctx.fill();
+        ctx.strokeStyle = '#a78bfa80';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(p.x + halfW + 6, p.y + imgY); ctx.lineTo(p.x + halfW + 14, p.y + imgY); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(p.x + halfW + 10, p.y + imgY - 4); ctx.lineTo(p.x + halfW + 10, p.y + imgY + 4); ctx.stroke();
+    }
+
+    // Draw match count info on canvas
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#51cf66';
+    ctx.fillText(`✅ 好匹配: ${goodCount}`, 15, h - 6);
+    ctx.fillStyle = '#ff6b6b';
+    ctx.fillText(`❌ 剔除: ${badCount}`, 150, h - 6);
+}
+
+document.getElementById('ratio').oninput = draw;
+draw();
+window.addEventListener('resize', () => { resize(); draw(); });
+</script>
+</body>
+</html>

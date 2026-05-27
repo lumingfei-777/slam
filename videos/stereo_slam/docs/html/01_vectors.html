@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>01 - 向量运算</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #0f0f1a; color: #e0e0e0; overflow: hidden; height: 100vh; }
+#container { display: flex; height: 100vh; }
+#canvas-wrap { flex: 1; position: relative; }
+#canvas-wrap canvas { display: block; }
+#panel { width: 400px; background: #1a1a35; padding: 28px; overflow-y: auto; border-left: 1px solid #2d2d5e; }
+#panel h2 { color: #60a5fa; font-size: 1.3em; margin-bottom: 6px; }
+#panel .sub { color: #94a3b8; font-size: 0.9em; margin-bottom: 20px; }
+.ctrl { margin-bottom: 20px; background: #252550; border-radius: 12px; padding: 16px; }
+.ctrl label { display: block; font-size: 0.85em; color: #a78bfa; margin-bottom: 6px; }
+.ctrl .slider-row { display: flex; align-items: center; gap: 10px; }
+.ctrl input[type=range] { flex: 1; accent-color: #60a5fa; }
+.ctrl .val { min-width: 36px; text-align: right; color: #e0e0e0; font-family: monospace; font-size: 0.9em; }
+.btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.85em; transition: 0.2s; }
+.btn.primary { background: #2563eb; color: white; }
+.btn.primary:hover { background: #3b82f6; }
+.btn.secondary { background: #4a4a7a; color: #e0e0e0; }
+.btn.secondary:hover { background: #5a5a8a; }
+.info-box { background: #252550; border-radius: 12px; padding: 16px; margin-top: 16px; font-size: 0.85em; line-height: 1.8; }
+.info-box span { color: #fbbf24; }
+.highlight { color: #60a5fa; font-weight: bold; }
+</style>
+</head>
+<body>
+<div id="container">
+<div id="canvas-wrap"></div>
+<div id="panel">
+<h2>📐 向量运算</h2>
+<div class="sub">拖拽滑块，观察向量在 3D 空间中的变化</div>
+
+<div class="ctrl">
+<label>🅰️ 向量 A</label>
+<div class="slider-row"><span style="color:#ff6b6b">X</span><input type="range" id="ax" min="-5" max="5" value="3" step="0.1"><span class="val" id="axv">3.0</span></div>
+<div class="slider-row"><span style="color:#51cf66">Y</span><input type="range" id="ay" min="-5" max="5" value="2" step="0.1"><span class="val" id="ayv">2.0</span></div>
+<div class="slider-row"><span style="color:#4dabf7">Z</span><input type="range" id="az" min="-5" max="5" value="1" step="0.1"><span class="val" id="azv">1.0</span></div>
+</div>
+
+<div class="ctrl">
+<label>🅱️ 向量 B</label>
+<div class="slider-row"><span style="color:#ff6b6b">X</span><input type="range" id="bx" min="-5" max="5" value="1" step="0.1"><span class="val" id="bxv">1.0</span></div>
+<div class="slider-row"><span style="color:#51cf66">Y</span><input type="range" id="by" min="-5" max="5" value="3" step="0.1"><span class="val" id="byv">3.0</span></div>
+<div class="slider-row"><span style="color:#4dabf7">Z</span><input type="range" id="bz" min="-5" max="5" value="2" step="0.1"><span class="val" id="bzv">2.0</span></div>
+</div>
+
+<div class="btn-group">
+<button class="btn primary" id="showAdd">A + B</button>
+<button class="btn primary" id="showDot">A·B 点积</button>
+<button class="btn primary" id="showCross">A×B 叉积</button>
+<button class="btn secondary" id="reset">重置</button>
+</div>
+
+<div class="info-box" id="info">
+<strong>结果：</strong><br>
+|A| = <span id="normA">3.74</span><br>
+|B| = <span id="normB">3.74</span><br>
+A·B = <span id="dotVal">0.00</span><br>
+A×B = <span id="crossVal">(0, 0, 0)</span><br>
+夹角 = <span id="angleVal">0.0</span>°
+</div>
+</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const panel = document.getElementById('canvas-wrap');
+const w = panel.clientWidth, h = panel.clientHeight;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f0f1a);
+const cam = new THREE.PerspectiveCamera(45, w/h, 0.1, 50);
+cam.position.set(8, 6, 10);
+cam.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(w, h);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+panel.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(cam, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0,0,0);
+
+// Grid
+const gridHelper = new THREE.GridHelper(12, 12, 0x4a4a7a, 0x2d2d5e);
+scene.add(gridHelper);
+const axes = new THREE.AxesHelper(6);
+scene.add(axes);
+// Labels for axes - use sprites
+function makeLabel(text, pos, color) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = color; ctx.font = 'bold 40px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, 32, 32);
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.copy(pos);
+    sprite.scale.set(1,1,1);
+    scene.add(sprite);
+}
+makeLabel('X', new THREE.Vector3(6.5, 0, 0), '#ff6b6b');
+makeLabel('Y', new THREE.Vector3(0, 6.5, 0), '#51cf66');
+makeLabel('Z', new THREE.Vector3(0, 0, 6.5), '#4dabf7');
+
+// Arrows
+const arrowA = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), 1, 0xff6b6b, 0.4, 0.2);
+const arrowB = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), 1, 0x51cf66, 0.4, 0.2);
+const arrowR = new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), 1, 0xfbbf24, 0.4, 0.2);
+scene.add(arrowA); scene.add(arrowB); scene.add(arrowR);
+
+// Labels for arrow tips
+const labelA = makeLabel('A', new THREE.Vector3(0,0,0), '#ff6b6b');
+const labelB = makeLabel('B', new THREE.Vector3(0,0,0), '#51cf66');
+const labelR2 = makeLabel('R', new THREE.Vector3(0,0,0), '#fbbf24');
+// Remove previous sprite and recreate for each frame? Let's just make simple circle markers
+scene.remove(labelA); scene.remove(labelB); scene.remove(labelR2);
+
+function makeDot() {
+    const g = new THREE.SphereGeometry(0.12, 16, 16);
+    const mA = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xff6b6b }));
+    const mB = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x51cf66 }));
+    const mR = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));
+    scene.add(mA); scene.add(mB); scene.add(mR);
+    return [mA, mB, mR];
+}
+const dots = makeDot();
+
+function update() {
+    const ax = parseFloat(document.getElementById('ax').value);
+    const ay = parseFloat(document.getElementById('ay').value);
+    const az = parseFloat(document.getElementById('az').value);
+    const bx = parseFloat(document.getElementById('bx').value);
+    const by = parseFloat(document.getElementById('by').value);
+    const bz = parseFloat(document.getElementById('bz').value);
+
+    document.getElementById('axv').textContent = ax.toFixed(1);
+    document.getElementById('ayv').textContent = ay.toFixed(1);
+    document.getElementById('azv').textContent = az.toFixed(1);
+    document.getElementById('bxv').textContent = bx.toFixed(1);
+    document.getElementById('byv').textContent = by.toFixed(1);
+    document.getElementById('bzv').textContent = bz.toFixed(1);
+
+    const vA = new THREE.Vector3(ax, ay, az);
+    const vB = new THREE.Vector3(bx, by, bz);
+    const vR = new THREE.Vector3();
+
+    arrowA.setDirection(vA.clone().normalize());
+    arrowA.setLength(vA.length());
+    dots[0].position.copy(vA);
+
+    arrowB.setDirection(vB.clone().normalize());
+    arrowB.setLength(vB.length());
+    dots[1].position.copy(vB);
+
+    // Show result arrow based on active mode
+    const mode = document.body.dataset.mode || 'none';
+    if (mode === 'add') {
+        vR.copy(vA).add(vB);
+        arrowR.setDirection(vR.clone().normalize());
+        arrowR.setLength(vR.length());
+        arrowR.visible = true;
+        dots[2].position.copy(vR);
+    } else if (mode === 'cross') {
+        vR.copy(vA).cross(vB);
+        arrowR.setDirection(vR.clone().normalize());
+        arrowR.setLength(Math.max(vR.length(), 0.1));
+        arrowR.visible = true;
+        dots[2].position.copy(vR);
+    } else {
+        arrowR.visible = false;
+        dots[2].position.set(0,0,0);
+    }
+
+    const dot = vA.dot(vB);
+    const cross = new THREE.Vector3().crossVectors(vA, vB);
+    const angle = vA.length() * vB.length() > 0.001 ? Math.acos(Math.max(-1, Math.min(1, dot / (vA.length() * vB.length())))) * 180 / Math.PI : 0;
+
+    document.getElementById('normA').textContent = vA.length().toFixed(2);
+    document.getElementById('normB').textContent = vB.length().toFixed(2);
+    document.getElementById('dotVal').textContent = dot.toFixed(2);
+    document.getElementById('crossVal').textContent = `(${cross.x.toFixed(2)}, ${cross.y.toFixed(2)}, ${cross.z.toFixed(2)})`;
+    document.getElementById('angleVal').textContent = angle.toFixed(1);
+}
+
+document.getElementById('showAdd').onclick = () => { document.body.dataset.mode = 'add'; update(); };
+document.getElementById('showDot').onclick = () => { document.body.dataset.mode = 'none'; update(); };
+document.getElementById('showCross').onclick = () => { document.body.dataset.mode = 'cross'; update(); };
+document.getElementById('reset').onclick = () => {
+    document.body.dataset.mode = 'none';
+    document.getElementById('ax').value = 3; document.getElementById('ay').value = 2; document.getElementById('az').value = 1;
+    document.getElementById('bx').value = 1; document.getElementById('by').value = 3; document.getElementById('bz').value = 2;
+    update();
+};
+
+['ax','ay','az','bx','by','bz'].forEach(id => document.getElementById(id).oninput = update);
+
+function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, cam);
+}
+animate();
+update();
+
+window.addEventListener('resize', () => {
+    const w2 = panel.clientWidth, h2 = panel.clientHeight;
+    cam.aspect = w2/h2; cam.updateProjectionMatrix();
+    renderer.setSize(w2, h2);
+});
+</script>
+</body>
+</html>

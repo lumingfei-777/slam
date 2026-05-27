@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SLAM 完整实现路径 — 逐模块详解</title>
+<script>MathJax={tex:{inlineMath:[['$','$']],displayMath:[['$$','$$'],['\\[','\\]']]},svg:{fontCache:'global'}};</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Georgia','Microsoft YaHei',serif;background:#f8f6f0;color:#1a1a2e;padding:40px 20px;}
+#container{max-width:900px;margin:0 auto;}
+h1{font-size:2em;border-left:4px solid #2563eb;padding-left:18px;margin-bottom:4px;}
+h1 small{font-size:0.4em;display:block;color:#6a6a8a;font-weight:400;margin-top:4px;}
+.sub{color:#6a6a8a;font-size:0.92em;margin-bottom:28px;padding-left:22px;}
+h2{font-size:1.35em;margin:36px 0 14px;color:#1e1e3a;border-bottom:1px solid #ddd8ce;padding-bottom:6px;}
+h3{font-size:1.1em;margin:24px 0 10px;color:#2563eb;}
+h4{font-size:0.95em;margin:18px 0 8px;color:#2d2d5e;}
+p{margin:8px 0;line-height:1.85;font-size:0.95em;color:#2a2a3e;}
+.eq{overflow-x:auto;padding:10px 14px;margin:8px 0;background:#fff;border-radius:8px;border:1px solid #e5e0d6;text-align:center;font-size:0.95em;line-height:2.2;font-family:monospace;}
+pre{background:#1a1a2e;color:#e0e0e0;padding:14px 18px;border-radius:8px;overflow-x:auto;font-size:0.85em;line-height:1.6;margin:10px 0;}
+pre .cm{color:#6a6a8a;}pre .kw{color:#a78bfa;}pre .fn{color:#60a5fa;}pre .str{color:#34d399;}pre .ty{color:#fbbf24;}pre .nu{color:#fbbf24;}
+.box{border-radius:10px;padding:14px 18px;margin:12px 0;font-size:0.93em;}
+.box.blue{background:#eef2ff;border-left:4px solid #2563eb;}
+.box.green{background:#f0fdf4;border-left:4px solid #16a34a;}
+.box.warn{background:#fef2f2;border-left:4px solid #dc2626;}
+.box.purple{background:#faf5ff;border-left:4px solid #a78bfa;}
+.box.yellow{background:#fefce8;border-left:4px solid #eab308;}
+ul,ol{margin:6px 0 6px 20px;line-height:1.85;font-size:0.95em;}
+li{margin:3px 0;}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:0.88em;}
+th{background:#1e1e3a;color:#e0e0e0;padding:7px 10px;text-align:left;font-weight:600;}
+td{padding:7px 10px;border-bottom:1px solid #ddd8ce;}
+tr:nth-child(even) td{background:#faf8f4;}
+.footer{text-align:center;margin-top:60px;padding-top:20px;border-top:1px solid #ddd8ce;color:#94a3b8;font-size:0.82em;}
+.tag{display:inline-block;padding:1px 10px;border-radius:10px;font-size:0.78em;font-weight:600;}
+.tag.f{background:#dbeafe;color:#2563eb;}
+.tag.b{background:#d1fae5;color:#16a34a;}
+.tag.m{background:#fef3c7;color:#ca8a04;}
+.code-path{font-family:monospace;font-size:0.9em;background:#f0ede8;padding:1px 6px;border-radius:4px;}
+</style>
+</head>
+<body>
+<div id="container">
+
+<h1>SLAM 完整实现路径 <small>stereo_slam/ · 逐文件、逐函数、逐行解读</small></h1>
+<div class="sub">从图像输入到轨迹输出，每个模块的职责、算法、数学公式和代码位置。</div>
+
+<!-- ====== 目录 ====== -->
+<h2>目录</h2>
+<ol style="font-size:0.92em;">
+  <li><a href="#overview">系统架构总览</a></li>
+  <li><a href="#dataflow">数据流全景</a></li>
+  <li><a href="#config">config.py — 参数配置</a></li>
+  <li><a href="#dataset">dataset.py — 数据加载</a></li>
+  <li><a href="#stereo">stereo.py — 立体匹配</a></li>
+  <li><a href="#tracker">tracker.py — 特征提取与 PnP</a></li>
+  <li><a href="#mapping">mapping.py — 地图与关键帧</a></li>
+  <li><a href="#optimizer">optimizer.py — BA 与闭环</a></li>
+  <li><a href="#visualizer">visualizer.py — 可视化</a></li>
+  <li><a href="#slam">slam.py — 主流程</a></li>
+  <li><a href="#main">main.py — 入口</a></li>
+  <li><a href="#pipeline">完整流水线</a></li>
+  <li><a href="#params">关键参数表</a></li>
+</ol>
+
+<!-- ====== 1. 系统架构 ====== -->
+<h2 id="overview">一、系统架构总览</h2>
+
+<div class="eq" style="text-align:left;line-height:2.2;padding:16px 24px;font-size:0.9em;">
+<span style="color:#fbbf24;font-weight:700;">文件结构</span><br>
+<br>
+<span style="color:#94a3b8;">stereo_slam/</span><br>
+<span style="color:#94a3b8;">├──</span> <span style="color:#2563eb;">main.py</span>         <span style="color:#94a3b8;">入口：创建 SLAM 对象 → 调用 run()</span><br>
+<span style="color:#94a3b8;">├──</span> <span style="color:#2563eb;">config.py</span>       <span style="color:#94a3b8;">所有可调参数集中管理</span><br>
+<span style="color:#94a3b8;">├──</span> <span style="color:#2563eb;">dataset.py</span>      <span style="color:#94a3b8;">从磁盘读取图片 → 按时间戳配对 → 返回 list</span><br>
+<span style="color:#94a3b8;">├──</span> <span style="color:#2563eb;">stereo.py</span>       <span style="color:#94a3b8;">StereoSGBM 密集视差 + ORB 稀疏匹配</span><br>
+<span style="color:#94a3b8;">├──</span> <span style="color:#2563eb;">tracker.py</span>      <span style="color:#94a3b8;">ORB 特征提取 + 帧间匹配 + PnP + RANSAC</span><br>
+<span style="color:#94a3b8;">├──</span> <span style="color:#2563eb;">mapping.py</span>      <span style="color:#94a3b8;">Map 类、MapPoint、KeyFrame、三角化</span><br>
+<span style="color:#94a3b8;">├──</span> <span style="color:#2563eb;">optimizer.py</span>    <span style="color:#94a3b8;">局部 BA + 闭环检测</span><br>
+<span style="color:#94a3b8;">├──</span> <span style="color:#2563eb;">visualizer.py</span>   <span style="color:#94a3b8;">matplotlib 3D 可视化</span><br>
+<span style="color:#94a3b8;">├──</span> <span style="color:#2563eb;">slam.py</span>         <span style="color:#94a3b8;">主类 SLAM：串联所有模块</span><br>
+<span style="color:#94a3b8;">├──</span> docs/<br>
+<span style="color:#94a3b8;">└──</span> output/
+</div>
+
+<!-- ====== 2. 数据流全景 ====== -->
+<h2 id="dataflow">二、数据流全景</h2>
+
+<div class="eq" style="text-align:left;line-height:2.4;padding:16px 24px;font-size:0.85em;font-family:monospace;">
+<span style="color:#94a3b8;">┌─────────────────────────────────────────────────────────────────┐</span><br>
+<span style="color:#94a3b8;">│</span> <span style="color:#fbbf24;">数据流方向</span>                                                   <span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">└─────────────────────────────────────────────────────────────────┘</span><br>
+<br>
+<span style="color:#60a5fa;">IR_LEFT/*.png</span> + <span style="color:#60a5fa;">IR_RIGHT/*.png</span><br>
+<span style="color:#94a3b8;">  │</span><br>
+<span style="color:#94a3b8;">  ▼</span><br>
+<span style="color:#2563eb;">dataset.py</span> ──→ <span style="color:#34d399;">[(ts, left_img, right_img), ...]</span><br>
+<span style="color:#94a3b8;">  │</span><br>
+<span style="color:#94a3b8;">  ▼ （逐帧处理）</span><br>
+<span style="color:#94a3b8;">  ┌─────────────────────────────────────┐</span><br>
+<span style="color:#94a3b8;">  │</span> <span style="color:#2563eb;">slam.py</span> <span style="color:#60a5fa;">_process_frame()</span>             <span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span>                                     <span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span> ① <span style="color:#a78bfa;">CLAHE增强</span> ← <span style="color:#60a5fa;">stereo.preprocess</span>    <span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span> ② <span style="color:#a78bfa;">ORB特征</span> ← <span style="color:#60a5fa;">tracker.extract</span>         <span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span> ③ <span style="color:#a78bfa;">立体匹配</span> ← <span style="color:#60a5fa;">tracker.match_ratio_test</span><span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span> ④ <span style="color:#a78bfa;">三角化</span> ← <span style="color:#60a5fa;">mapping.triangulate_stereo</span><span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span> ⑤ <span style="color:#a78bfa;">帧间匹配</span> ← <span style="color:#60a5fa;">tracker.match_ratio_test</span><span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span> ⑥ <span style="color:#a78bfa;">PnP</span> ← <span style="color:#60a5fa;">tracker.estimate_pose_pnp</span>    <span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span> ⑦ <span style="color:#a78bfa;">添加地图点</span> → <span style="color:#34d399;">map.points{}</span>         <span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span> ⑧ <span style="color:#a78bfa;">关键帧判断</span> → <span style="color:#34d399;">map.keyframes[]</span>       <span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span> ⑨ <span style="color:#a78bfa;">局部BA</span> ← <span style="color:#60a5fa;">optimizer.local_ba</span>      <span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  │</span> ⑩ <span style="color:#a78bfa;">闭环检测</span> ← <span style="color:#60a5fa;">optimizer.detect_loop</span>  <span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">  └─────────────────────────────────────┘</span><br>
+<span style="color:#94a3b8;">  │</span><br>
+<span style="color:#94a3b8;">  ▼</span><br>
+<span style="color:#34d399;">output/trajectory.csv</span> + <span style="color:#34d399;">output/trajectory.png</span>
+</div>
+
+<!-- ====== 3. config.py ====== -->
+<h2 id="config">三、config.py — 所有参数集中管理</h2>
+
+<p><span class="code-path">stereo_slam/config.py</span>，共约 50 行。</p>
+<div class="box blue"><strong>职责：</strong>存放所有可调参数，其他模块从这里 import。</div>
+
+<h3>参数分类</h3>
+
+<table>
+<tr><th>类别</th><th>参数</th><th>值</th><th>影响</th></tr>
+<tr><td rowspan="2"><strong>内参</strong></td><td><code>K_LEFT</code></td><td>fx=596, fy=540, cx=424, cy=240</td><td>投影精度</td></tr>
+<tr><td><code>BASELINE_MM</code></td><td>95.0</td><td>深度精度</td></tr>
+<tr><td rowspan="3"><strong>SGBM</strong></td><td><code>SGBM_NUM_DISPARITIES</code></td><td>64</td><td>视差搜索范围</td></tr>
+<tr><td><code>SGBM_BLOCK_SIZE</code></td><td>5</td><td>匹配块大小</td></tr>
+<tr><td><code>SGBM_UNIQUENESS_RATIO</code></td><td>10</td><td>视差唯一性</td></tr>
+<tr><td rowspan="3"><strong>ORB</strong></td><td><code>ORB_N_FEATURES</code></td><td>800</td><td>每帧特征数</td></tr>
+<tr><td><code>ORB_SCALE_FACTOR</code></td><td>1.2</td><td>金字塔缩放</td></tr>
+<tr><td><code>ORB_N_LEVELS</code></td><td>4</td><td>金字塔层数</td></tr>
+<tr><td rowspan="3"><strong>PnP</strong></td><td><code>PNP_MIN_MATCHES</code></td><td>10</td><td>最小匹配对</td></tr>
+<tr><td><code>PNP_ITERATIONS</code></td><td>200</td><td>RANSAC 迭代</td></tr>
+<tr><td><code>PNP_REPROJ_ERROR</code></td><td>8.0</td><td>内点阈值(px)</td></tr>
+<tr><td rowspan="3"><strong>关键帧</strong></td><td><code>KF_MIN_TRANSLATION</code></td><td>200</td><td>最小平移(mm)</td></tr>
+<tr><td><code>KF_MIN_ROTATION</code></td><td>0.15</td><td>最小旋转(rad)</td></tr>
+<tr><td><code>KF_MIN_TRACKED_RATIO</code></td><td>0.4</td><td>最低跟踪比</td></tr>
+<tr><td rowspan="2"><strong>BA</strong></td><td><code>BA_WINDOW</code></td><td>3</td><td>滑动窗口大小</td></tr>
+<tr><td><code>BA_MAX_ITER</code></td><td>10</td><td>LM 最大迭代</td></tr>
+</table>
+
+<!-- ====== 4. dataset.py ====== -->
+<h2 id="dataset">四、dataset.py — 数据加载</h2>
+
+<p><span class="code-path">stereo_slam/dataset.py</span>，共约 80 行。</p>
+
+<div class="box green"><strong>功能：</strong>扫描 IR_LEFT/ 和 IR_RIGHT/ 目录 → 按 d 时间戳配对 → 加载 → 返回排序后的 (ts, left_img, right_img) 列表。</div>
+
+<h3>文件名解析</h3>
+
+<div class="eq" style="text-align:left;line-height:1.8;padding:12px 18px;">
+<span style="color:#94a3b8;">文件名：</span>011714_0000_d<span style="color:#dc2626;font-weight:700;">1776928462415402</span>_s..._IR_LEFT_Y8_848x480.png<br>
+<span style="color:#94a3b8;">正则：</span>(\d+)_\d+_d(\d+)_s\d+_IR_(LEFT|RIGHT)_Y8_\d+x\d+\.png<br>
+<span style="color:#94a3b8;">配对键：</span><span style="color:#dc2626;font-weight:700;">group(2)</span> = d 时间戳
+</div>
+
+<h3>配对逻辑</h3>
+
+<div class="eq" style="text-align:left;line-height:1.8;padding:12px 18px;font-family:monospace;">
+<span style="color:#60a5fa;">left_map</span> = {<span style="color:#fbbf24;">d_ts</span>: filepath, ...} &emsp;<span style="color:#94a3b8;"># 字典：d时间戳 → 左图路径</span><br>
+<span style="color:#60a5fa;">right_map</span> = {<span style="color:#fbbf24;">d_ts</span>: filepath, ...} &emsp;<span style="color:#94a3b8;"># 字典：d时间戳 → 右图路径</span><br><br>
+<span style="color:#60a5fa;">common</span> = <span style="color:#fbbf24;">sorted</span>( left_map.keys() & right_map.keys() )<br>
+&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 取交集 = 同时有左右图的时间戳</span><br><br>
+<span style="color:#a78bfa;">for</span> ts <span style="color:#a78bfa;">in</span> common:<br>
+&emsp;&emsp;left_img = <span style="color:#60a5fa;">imdecode</span>(<span style="color:#a78bfa;">open</span>(left_map[ts], <span class="str">'rb'</span>))<br>
+&emsp;&emsp;right_img = <span class="fn">imdecode</span>(<span class="kw">open</span>(right_map[ts], <span class="str">'rb'</span>))<br>
+&emsp;&emsp;<span class="fn">pairs.append</span>((ts, left_img, right_img))
+</div>
+
+<h3>中文路径问题</h3>
+<div class="box warn">
+OpenCV 的 <code>cv2.imread()</code> 在 Windows 上不能处理含中文的路径。解法：先用 Python 的 <code>open()</code> 读取二进制 → 再用 <code>cv2.imdecode()</code> 解码。
+</div>
+
+<h3>函数签名</h3>
+
+<table>
+<tr><th>函数</th><th>输入</th><th>输出</th></tr>
+<tr><td><code>_parse_timestamp(fname)</code></td><td>文件名 str</td><td>(d_timestamp, side_str) or (None, None)</td></tr>
+<tr><td><code>_imread_unicode(path)</code></td><td>路径 str（支持中文）</td><td>np.ndarray (H, W) uint8</td></tr>
+<tr><td><code>_imsave_unicode(path, img)</code></td><td>路径 + 图像</td><td>bool 是否成功</td></tr>
+<tr><td><code>load_stereo_pairs(left_dir, right_dir)</code></td><td>左右目录路径</td><td>[(ts, left, right), ...]</td></tr>
+</table>
+
+<!-- ====== 5. stereo.py ====== -->
+<h2 id="stereo">五、stereo.py — 立体匹配</h2>
+
+<p><span class="code-path">stereo_slam/stereo.py</span>，共约 70 行。</p>
+
+<div class="box purple">
+  <strong>功能：</strong>两个算法——<strong>密集匹配</strong>（StereoSGBM 算每像素视差 → 深度图）+ <strong>稀疏匹配</strong>（ORB 特征提取 + 左右图匹配）。
+</div>
+
+<h3>5.1 CLAHE 预处理</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;">
+在 <code>preprocess(image)</code> 中：<br>
+创建 CLAHE 对象 → clipLimit=2.0, tileGridSize=(8,8) → apply(image)<br>
+<br>
+为什么：红外图像对比度低，CLAHE 能增强局部纹理，让特征提取和立体匹配更准。
+</div>
+
+<h3>5.2 StereoSGBM</h3>
+
+<p>半全局块匹配（Semi-Global Block Matching），Hirschmüller 2008 年提出。</p>
+
+<div class="box yellow">
+  <strong>核心思想：</strong><br>
+  <ol>
+    <li>对每个像素，在右图同一行上搜索，计算匹配代价（Census 变换 + Hamming 距离）</li>
+    <li>沿多个方向做动态规划，聚合代价</li>
+    <li>选择代价最小的视差值</li>
+    <li>后处理：唯一性检查、斑点滤波</li>
+  </ol>
+</div>
+
+<div class="eq" style="text-align:left;padding:10px 16px;">
+<strong>关键参数：</strong><br>
+numDisparities=64：搜索 64 个视差级别<br>
+blockSize=5：5×5 匹配块<br>
+P1=8×3×25, P2=32×3×25：平滑惩罚项<br>
+mode=2 (MODE_HH)：高质量模式
+</div>
+
+<h3>5.3 视差转深度</h3>
+
+<div class="eq">
+  \[
+  Z = \frac{f_x \cdot B}{d}
+  \]
+  $f_x = 596.25$（焦距像素），$B = 95$ mm（基线），$d$ 为视差（像素）
+</div>
+
+<h3>5.4 ORB 特征提取</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;">
+ORB = Oriented FAST + Rotated BRIEF<br>
+<br>
+FAST：检测角点（像素周围 16 个像素中至少有 N 个比它亮/暗）<br>
+BRIEF：256 位二进制描述子（随机 256 对像素比较亮度）<br>
+方向：用灰度质心法计算主方向 → 旋转不变性<br>
+尺度：图像金字塔 → 尺度不变性<br>
+<br>
+<code>cv2.ORB_create(nfeatures=800, scaleFactor=1.2, nlevels=4)</code>
+</div>
+
+<h3>5.5 左右图特征匹配</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;">
+<code>match_stereo_features(desc_left, desc_right, ratio_thresh=0.75)</code><br>
+<br>
+① BFMatcher(NORM_HAMMING) 做 knnMatch(d1, d2, k=2)<br>
+② 对每对 (m, n)：m.distance &lt; ratio × n.distance → 保留<br>
+③ 返回保留的 DMatch 列表<br>
+<br>
+<strong>比率测试的意义：</strong>如果最近邻和次近邻太接近 → 匹配不明确 → 宁可不要。
+</div>
+
+<h3>函数清单</h3>
+
+<table>
+<tr><th>函数</th><th>输入</th><th>输出</th><th>行</th></tr>
+<tr><td><code>preprocess(image)</code></td><td>(H,W) uint8</td><td>(H,W) uint8 增强后</td><td>13-16</td></tr>
+<tr><td><code>create_stereo_matcher()</code></td><td>无</td><td>StereoSGBM 对象</td><td>19-31</td></tr>
+<tr><td><code>compute_disparity(stereo, L, R)</code></td><td>左右图</td><td>(H,W) float32 视差</td><td>34-37</td></tr>
+<tr><td><code>disparity_to_depth(disparity)</code></td><td>视差图</td><td>(H,W) float32 深度(mm)</td><td>40-46</td></tr>
+<tr><td><code>extract_orb_features(image)</code></td><td>图像</td><td>(kp, desc)</td><td>49-56</td></tr>
+<tr><td><code>match_stereo_features(dL, dR)</code></td><td>左右描述子</td><td>[DMatch]</td><td>59-70</td></tr>
+</table>
+
+<!-- ====== 6. tracker.py ====== -->
+<h2 id="tracker">六、tracker.py — 特征提取与 PnP</h2>
+
+<p><span class="code-path">stereo_slam/tracker.py</span>，共约 70 行。</p>
+
+<div class="box green">
+  <strong>功能：</strong>封装 ORB 特征提取 + 特征匹配（比率测试）+ PnP + RANSAC 位姿估计。
+</div>
+
+<h3>6.1 Tracker 类</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;font-family:monospace;line-height:1.7;">
+<span class="kw">class</span> <span style="color:#fbbf24;">Tracker</span>:<br>
+&emsp;&emsp;<span class="kw">def</span> <span class="fn">__init__</span>(self):<br>
+&emsp;&emsp;&emsp;&emsp;self.orb = cv2.ORB_create(<span class="nu">800</span>, <span class="nu">1.2</span>, <span class="nu">4</span>)<br><br>
+&emsp;&emsp;<span class="kw">def</span> <span class="fn">extract</span>(self, image): &emsp;&emsp;&emsp;<span style="color:#94a3b8;"># → (kp, desc)</span><br>
+&emsp;&emsp;<span class="kw">def</span> <span class="fn">match_ratio_test</span>(self, d1, d2): <span style="color:#94a3b8;"># → [DMatch]</span><br>
+&emsp;&emsp;<span class="kw">def</span> <span class="fn">estimate_pose_pnp</span>(self, pts3d, pts2d): <span style="color:#94a3b8;"># → (rvec, tvec, inlier_mask)</span><br>
+&emsp;&emsp;<span class="kw">def</span> rvec_tvec_to_matrix(rvec, tvec): &emsp;<span style="color:#94a3b8;"># → 4×4 变换矩阵</span>
+</div>
+
+<h3>6.2 PnP + RANSAC</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;">
+<strong>输入：</strong>3D 点世界坐标 + 2D 像素坐标 + 相机内参 K<br>
+<strong>输出：</strong>旋转向量 rvec (3,) + 平移向量 tvec (3,)<br>
+<br>
+<code>cv2.solvePnPRansac(pts_3d, pts_2d, K, D_IR,</code><br>
+<code>&emsp;&emsp;iterationsCount=200, reprojectionError=8.0,</code><br>
+<code>&emsp;&emsp;confidence=0.99, flags=SOLVEPNP_ITERATIVE)</code>
+</div>
+
+<div class="eq">
+  <strong>目标：</strong> $\displaystyle \min_{R,t} \sum_{i \in inliers} \left\| \pi(R,t; P_i) - p_i \right\|^2$
+</div>
+
+<h3>6.3 变换矩阵转换</h3>
+
+<div class="eq">
+  \[
+  T = \begin{bmatrix} R & t \\ 0^T & 1 \end{bmatrix} \quad
+  \text{其中 $R$ 由 Rodrigues 公式从 rvec 转换得到}
+  \]
+</div>
+
+<h3>函数清单</h3>
+
+<table>
+<tr><th>函数</th><th>输入</th><th>输出</th></tr>
+<tr><td><code>extract(image)</code></td><td>(H,W) uint8</td><td>(kp, desc)</td></tr>
+<tr><td><code>match_ratio_test(d1, d2)</code></td><td>描述子对</td><td>[DMatch] 好匹配</td></tr>
+<tr><td><code>estimate_pose_pnp(pts3d, pts2d)</code></td><td>3D(N,3)+2D(N,2)</td><td>(rvec, tvec, inlier_mask) or (None,None,[])</td></tr>
+<tr><td><code>rvec_tvec_to_matrix(rvec, tvec)</code></td><td>旋转向量+平移</td><td>(4,4) 变换矩阵</td></tr>
+<tr><td><code>matrix_to_rvec_tvec(T)</code></td><td>(4,4) 变换矩阵</td><td>(rvec, tvec)</td></tr>
+</table>
+
+<!-- ====== 7. mapping.py ====== -->
+<h2 id="mapping">七、mapping.py — 地图与关键帧管理</h2>
+
+<h3>7.1 三类数据</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;font-family:monospace;line-height:1.7;">
+<span class="kw">class</span> <span style="color:#fbbf24;">MapPoint</span>:<br>
+&emsp;&emsp;id: int &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 全局唯一 ID（自动递增）</span><br>
+&emsp;&emsp;position: np.ndarray (3,) &emsp;<span style="color:#94a3b8;"># 世界坐标 XYZ (mm)</span><br>
+&emsp;&emsp;descriptor: np.ndarray (32,) &emsp;<span style="color:#94a3b8;"># ORB 描述子（用于重定位）</span><br>
+&emsp;&emsp;first_kf_id: int &emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 首次被哪个 KF 观测到</span><br>
+<br>
+<span class="kw">class</span> <span style="color:#fbbf24;">KeyFrame</span>:<br>
+&emsp;&emsp;id: int &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 全局唯一 ID</span><br>
+&emsp;&emsp;pose: np.ndarray (4,4) &emsp;&emsp;&emsp;<span style="color:#94a3b8;"># ← BA 会修改这个</span><br>
+&emsp;&emsp;pts_2d: list[(float,float)] &emsp;<span style="color:#94a3b8;"># KF 中每个 3D 点对应的 2D 观测</span><br>
+&emsp;&emsp;point_ids: list[int] &emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 对应的地图点 ID</span><br>
+&emsp;&emsp;timestamp: int<br>
+<br>
+<span class="kw">class</span> <span style="color:#fbbf24;">Map</span>:<br>
+&emsp;&emsp;points: dict[int, MapPoint] &emsp;&emsp;<span style="color:#94a3b8;"># 全部地图点</span><br>
+&emsp;&emsp;keyframes: list[KeyFrame] &emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 全部关键帧</span>
+</div>
+
+<h3>7.2 三角化</h3>
+
+<div class="eq">
+  \[
+  \text{cv2.triangulatePoints}(P_1, P_2, pts_l, pts_r)
+  \]
+  <span style="font-size:0.8em;">其中 $P_1 = K[I \mid 0]$, $P_2 = K[R \mid t]$ 分别为左右相机的 3×4 投影矩阵</span>
+</div>
+
+<p>返回 4×N 齐次坐标 → 归一化为 3D 坐标：</p>
+
+<div class="eq">
+  \[
+  \mathbf{P} = \begin{bmatrix} X/W \\ Y/W \\ Z/W \end{bmatrix}
+  \]
+</div>
+
+<h3>7.3 关键帧判断</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;font-family:monospace;">
+<span class="kw">def</span> <span class="fn">is_keyframe</span>(prev_pose, curr_pose, tracked_ratio):<br>
+&emsp;&emsp;delta = prev_pose⁻¹ @ curr_pose &emsp;&emsp;<span style="color:#94a3b8;"># 相对变换</span><br>
+&emsp;&emsp;trans = ||delta[:3, 3]|| &emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 平移距离</span><br>
+&emsp;&emsp;angle = arccos((tr(R)-1)/2) &emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 旋转角度</span><br>
+&emsp;&emsp;<span class="kw">return</span> trans &gt; 200mm <span class="kw">or</span> angle &gt; 0.15rad <span class="kw">or</span> ratio &lt; 0.4
+</div>
+
+<h3>函数清单</h3>
+
+<table>
+<tr><th>函数</th><th>输入</th><th>输出</th></tr>
+<tr><td><code>triangulate_stereo(kp_l, kp_r, matches, K_l, K_r, R, t)</code></td><td>匹配点+相机参数</td><td>pts_3d (N,3)</td></tr>
+<tr><td><code>is_keyframe(prev_pose, curr_pose, ratio)</code></td><td>前后帧位姿+跟踪比</td><td>bool</td></tr>
+<tr><td><code>Map.add_point(position, desc)</code></td><td>位置+描述子</td><td>point_id</td></tr>
+<tr><td><code>Map.add_keyframe(pose, pts2d, pids, ts)</code></td><td>KF 数据</td><td>kf_id</td></tr>
+<tr><td><code>Map.get_trajectory()</code></td><td>无</td><td>(n, 3) 轨迹点</td></tr>
+<tr><td><code>Map.get_all_points()</code></td><td>无</td><td>(n, 3) 全部 map 点</td></tr>
+</table>
+
+<!-- ====== 8. optimizer.py ====== -->
+<h2 id="optimizer">八、optimizer.py — 束调整与闭环</h2>
+
+<p><span class="code-path">stereo_slam/optimizer.py</span>，共约 120 行。</p>
+
+<h3>8.1 局部 BA</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;">
+<strong>优化变量：</strong>滑动窗口内 KF 的位姿 (6 DoF) + 观测到的 3D 点 (3 DoF)<br>
+<strong>目标函数：</strong>最小化所有观测的重投影误差<br>
+<br>
+<div style="text-align:center;font-size:1.1em;">$\displaystyle \min_{\{R_i,t_i\},\{X_j\}} \sum_{(i,j)} \| \pi(R_i,t_i; X_j) - x_{ij} \|^2$</div>
+</div>
+
+<div class="eq" style="text-align:left;padding:10px 16px;">
+<strong>实现：</strong>scipy.optimize.least_squares<br>
+<code>method='trf', max_nfev=10, ftol=1e-2, xtol=1e-2</code><br>
+<br>
+每次取最近 n=BA_WINDOW（默认 3）个关键帧：<br>
+&emsp;① 收集这些 KF 共同观测到的 3D 点<br>
+&emsp;② 构建参数向量：先所有 KF 位姿（6×n），再所有 3D 点（3×m）<br>
+&emsp;③ 构建残差函数：遍历每个观测，计算 (u_proj - u_obs, v_proj - v_obs)<br>
+&emsp;④ 调用 least_squares 优化<br>
+&emsp;⑤ 更新优化后的 KF 位姿和 3D 点坐标
+</div>
+
+<h3>8.2 闭环检测</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;">
+两个关键帧的空间距离很近，但它们在时间上相隔很远 → 可能形成了闭环。<br>
+<br>
+<code>detect_loop_closure(map, current_kf, all_kfs)</code><br>
+&emsp;① 遍历所有 KF（跳过最近 LC_SEARCH_DIST 个）<br>
+&emsp;② 计算与当前 KF 的空间距离<br>
+&emsp;③ 如果距离 &lt; 2×KF_MIN_TRANSLATION → 候选闭环<br>
+&emsp;④ 返回最近的候选
+</div>
+
+<h3>函数清单</h3>
+
+<table>
+<tr><th>函数</th><th>输入</th><th>输出</th></tr>
+<tr><td><code>local_bundle_adjustment(map)</code></td><td>全局地图</td><td>bool 是否成功</td></tr>
+<tr><td><code>detect_loop_closure(map, cur_kf, all_kfs)</code></td><td>地图+当前 KF</td><td>闭环 KF or None</td></tr>
+</table>
+
+<!-- ====== 9. visualizer.py ====== -->
+<h2 id="visualizer">九、visualizer.py — 可视化</h2>
+
+<p><span class="code-path">stereo_slam/visualizer.py</span>，共约 70 行。</p>
+
+<div class="box purple">
+  <strong>功能：</strong>用 matplotlib 绘制 3D 轨迹 + 点云，保存为 PNG 图片。
+</div>
+
+<div class="eq" style="text-align:left;padding:10px 16px;">
+<strong>关键绘图代码：</strong><br>
+<code>ax.plot(traj[:,0], traj[:,1], traj[:,2], 'b-')</code> &emsp;<span style="color:#94a3b8;"># 蓝色轨迹线</span><br>
+<code>ax.scatter(map_pts[:,0], map_pts[:,1], map_pts[:,2], c='g', s=1)</code> &emsp;<span style="color:#94a3b8;"># 绿色点云</span><br>
+<code>ax.view_init(elev=-90, azim=-90)</code> &emsp;<span style="color:#94a3b8;"># 俯视图</span>
+</div>
+
+<h3>函数清单</h3>
+
+<table>
+<tr><th>函数</th><th>功能</th></tr>
+<tr><td><code>init_3d()</code></td><td>创建 figure + 3D axes</td></tr>
+<tr><td><code>update(trajectory, map_points)</code></td><td>更新绘图内容</td></tr>
+<tr><td><code>save_frame(name)</code></td><td>保存当前帧为 PNG</td></tr>
+<tr><td><code>close()</code></td><td>关闭图形</td></tr>
+</table>
+
+<!-- ====== 10. slam.py ====== -->
+<h2 id="slam">十、slam.py — 主流程</h2>
+
+<p><span class="code-path">stereo_slam/slam.py</span>，共约 170 行，这是整个系统的核心。</p>
+
+<h3>10.1 SLAM 类</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;font-family:monospace;line-height:1.7;">
+<span class="kw">class</span> <span style="color:#fbbf24;">SLAM</span>:<br>
+&emsp;&emsp;<span style="color:#94a3b8;"># 子模块</span><br>
+&emsp;&emsp;map: Map<br>
+&emsp;&emsp;tracker: Tracker<br>
+&emsp;&emsp;stereo_matcher: StereoSGBM<br>
+&emsp;&emsp;visualizer: Visualizer<br>
+&emsp;&emsp;clahe: CLAHE<br>
+<br>
+&emsp;&emsp;<span style="color:#94a3b8;"># 状态（每帧更新）</span><br>
+&emsp;&emsp;prev_kp, prev_desc &emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 上一帧的关键点和描述子</span><br>
+&emsp;&emsp;prev_stereo_pt_ids &emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># {kp_idx → map_point_id}</span><br>
+&emsp;&emsp;prev_pose &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 上一帧位姿 (4×4)</span><br>
+&emsp;&emsp;all_poses &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 所有帧位姿（用于输出轨迹）</span>
+</div>
+
+<h3>10.2 run() — 主循环</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;font-family:monospace;line-height:1.6;">
+<span class="kw">def</span> <span class="fn">run</span>(self):<br>
+&emsp;&emsp;pairs = load_stereo_pairs(left_dir, right_dir) &emsp;<span style="color:#94a3b8;"># 加载所有图片对</span><br>
+&emsp;&emsp;<span class="kw">for</span> i, (ts, left, right) <span class="kw">in</span> enumerate(pairs):<br>
+&emsp;&emsp;&emsp;&emsp;self._process_frame(i, ts, left, right) &emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 处理每一帧</span><br>
+&emsp;&emsp;self._finish() &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 输出结果</span>
+</div>
+
+<h3>10.3 _process_frame() — 每帧处理流程（核心）</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;font-family:monospace;line-height:1.8;">
+<span class="kw">def</span> <span class="fn">_process_frame</span>(self, idx, ts, left_img, right_img):<br><br>
+&emsp;&emsp;<span style="color:#94a3b8;"># ① 增强</span><br>
+&emsp;&emsp;left_enh = self.clahe.apply(left_img)<br>
+&emsp;&emsp;right_enh = self.clahe.apply(right_img)<br><br>
+&emsp;&emsp;<span style="color:#94a3b8;"># ② 特征提取</span><br>
+&emsp;&emsp;kp_left, desc_left = self.tracker.extract(left_enh)<br>
+&emsp;&emsp;kp_right, desc_right = self.tracker.extract(right_enh)<br><br>
+&emsp;&emsp;<span style="color:#94a3b8;"># ③ 立体匹配（左右图）→ 三角化 → 3D 点</span><br>
+&emsp;&emsp;stereo_matches = self.tracker.match_ratio_test(desc_left, desc_right)<br>
+&emsp;&emsp;pts_3d_cam = triangulate_stereo(kp_left, kp_right, stereo_matches, ...)<br>
+&emsp;&emsp;过滤：Z &gt; 100mm<br><br>
+&emsp;&emsp;<span style="color:#94a3b8;"># ④ 第一帧：初始化</span><br>
+&emsp;&emsp;if idx == 0:<br>
+&emsp;&emsp;&emsp;&emsp;pose = I &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 第一帧位姿设为单位矩阵</span><br>
+&emsp;&emsp;&emsp;&emsp;3D点加到 Map<br>
+&emsp;&emsp;&emsp;&emsp;存储 kp_idx ↔ point_id 的映射<br>
+&emsp;&emsp;&emsp;&emsp;创建第一个 KF<br>
+&emsp;&emsp;&emsp;&emsp;return<br><br>
+&emsp;&emsp;<span style="color:#94a3b8;"># ⑤ 帧间匹配</span><br>
+&emsp;&emsp;track_matches = match_ratio_test(desc_left, self.prev_desc)<br><br>
+&emsp;&emsp;<span style="color:#94a3b8;"># ⑥ 构建 3D-2D 对应 → PnP</span><br>
+&emsp;&emsp;遍历 track_matches:<br>
+&emsp;&emsp;&emsp;&emsp;if trainIdx in prev_stereo_pt_ids:<br>
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;3D点 = map.points[prev_stereo_pt_ids[trainIdx]]<br>
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;2D点 = kp_left[queryIdx]<br>
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;加入 (3D, 2D) 列表<br>
+&emsp;&emsp;rvec, tvec, inlier_mask = estimate_pose_pnp(pts_3d, pts_2d)<br>
+&emsp;&emsp;pose = rvec_tvec_to_matrix(rvec, tvec)<br><br>
+&emsp;&emsp;<span style="color:#94a3b8;"># ⑦ 新 3D 点 → 世界坐标 → 加入 Map</span><br>
+&emsp;&emsp;pose_inv = inv(pose)<br>
+&emsp;&emsp;pts_3d_world = (R_inv @ pts_3d_cam.T + t_inv).T<br>
+&emsp;&emsp;添加到 map.points{}<br><br>
+&emsp;&emsp;<span style="color:#94a3b8;"># ⑧ 关键帧判断</span><br>
+&emsp;&emsp;if is_keyframe(prev_pose, pose, tracked_ratio):<br>
+&emsp;&emsp;&emsp;&emsp;创建 KF → 加入 map.keyframes[]<br>
+&emsp;&emsp;&emsp;&emsp;局部 BA<br>
+&emsp;&emsp;&emsp;&emsp;闭环检测<br><br>
+&emsp;&emsp;<span style="color:#94a3b8;"># ⑨ 更新状态</span><br>
+&emsp;&emsp;self.prev_kp, prev_desc = kp_left, desc_left<br>
+&emsp;&emsp;self.prev_pose = pose<br>
+&emsp;&emsp;self.prev_stereo_pt_ids = merged_pt_ids<br>
+&emsp;&emsp;self.all_poses.append(pose[:3, 3]) &emsp;<span style="color:#94a3b8;"># 记录轨迹</span>
+</div>
+
+<h3>10.4 _finish() — 结束处理</h3>
+
+<div class="eq" style="text-align:left;padding:10px 16px;">
+① 生成轨迹图 trajectory.png（俯视图 + 3D 视图）<br>
+② 保存 trajectory.csv（frame, x, y, z）<br>
+③ 打印统计信息
+</div>
+
+<!-- ====== 11. main.py ====== -->
+<h2 id="main">十一、main.py — 入口</h2>
+
+<div class="eq" style="text-align:left;padding:10px 16px;font-family:monospace;">
+<span class="kw">from</span> slam <span class="kw">import</span> <span style="color:#fbbf24;">SLAM</span><br><br>
+slam = <span style="color:#fbbf24;">SLAM</span>(<span class="str">'IR_LEFT'</span>, <span class="str">'IR_RIGHT'</span>)<br>
+slam.run()
+</div>
+
+<p>共 20 行。创建 SLAM 对象 → 调用 run()。</p>
+
+<!-- ====== 12. 完整流水线 ====== -->
+<h2 id="pipeline">十二、完整流水线（逐帧）</h2>
+
+<div class="eq" style="text-align:left;line-height:2.2;padding:14px 20px;font-size:0.88em;font-family:monospace;">
+<span style="color:#fbbf24;font-weight:700;">第 k 帧到来</span><br>
+<br>
+<span style="color:#94a3b8;">┌─</span> <span style="color:#60a5fa;">slam.py:47-48</span> &emsp;CLAHE 增强左右图<br>
+<span style="color:#94a3b8;">├─</span> <span style="color:#60a5fa;">slam.py:51-52</span> &emsp;ORB 特征提取（左+右）<br>
+<span style="color:#94a3b8;">├─</span> <span style="color:#60a5fa;">slam.py:55</span> &emsp;&emsp;立体匹配（左↔右）<br>
+<span style="color:#94a3b8;">├─</span> <span style="color:#60a5fa;">slam.py:62-65</span> &emsp;三角化 → 3D 点（相机坐标）<br>
+<span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">├─</span> <span style="color:#a78bfa;">如果 k=0（第一帧）</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;位姿 = I &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;">slam.py:73</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;3D 点加入 Map &emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;">slam.py:78-81</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;创建第一个 KF &emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;">slam.py:97</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;直接到 Ⓢ<br>
+<span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">├─</span> <span style="color:#a78bfa;">如果 k>0（后续帧）</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;与上一帧匹配 &emsp;&emsp;&emsp;&emsp;<span style="color:#60a5fa;">slam.py:104</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;构建 3D-2D 对应 &emsp;&emsp;&emsp;<span style="color:#60a5fa;">slam.py:106-111</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;PnP + RANSAC &emsp;&emsp;&emsp;<span style="color:#60a5fa;">slam.py:117</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;新 3D 点转到世界坐标 &emsp;<span style="color:#60a5fa;">slam.py:135</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;加入 Map &emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#60a5fa;">slam.py:140-147</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;关键帧判断 &emsp;&emsp;&emsp;&emsp;<span style="color:#60a5fa;">slam.py:162</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;&emsp;如果是 KF → 局部 BA + 闭环 &emsp;<span style="color:#60a5fa;">slam.py:173-180</span><br>
+<span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">├─</span> <span style="color:#a78bfa;">Ⓢ 更新状态</span><br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;prev_kp = kp_left<br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;prev_desc = desc_left<br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;prev_pose = pose<br>
+<span style="color:#94a3b8;">│</span>&emsp;&emsp;记录轨迹 &emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#60a5fa;">slam.py:186-189</span><br>
+<span style="color:#94a3b8;">│</span><br>
+<span style="color:#94a3b8;">└─</span> <span style="color:#a78bfa;">打印一行</span><br>
+&emsp;&emsp;&emsp;[N] TRACK 特征数 跟踪数 内点数 地图点数 KF数 位姿 距离
+</div>
+
+<!-- ====== 13. 关键参数表 ====== -->
+<h2 id="params">十三、关键参数速查表</h2>
+
+<table>
+<tr><th>参数</th><th>文件</th><th>默认值</th><th>调大 →</th><th>调小 →</th></tr>
+<tr><td>ORB_N_FEATURES</td><td>config.py:32</td><td>800</td><td>匹配更多，更慢</td><td>可能跟踪丢失</td></tr>
+<tr><td>MATCH_RATIO_TEST</td><td>config.py:48</td><td>0.75</td><td>匹配变多，误匹配增加</td><td>匹配更少，更可靠</td></tr>
+<tr><td>PNP_REPROJ_ERROR</td><td>config.py:54</td><td>8.0</td><td>更多内点，精度下降</td><td>更少内点，更精确</td></tr>
+<tr><td>KF_MIN_TRANSLATION</td><td>config.py:58</td><td>200</td><td>KF 更少，BA 更快</td><td>KF 更多，跟踪更稳</td></tr>
+<tr><td>KF_MIN_TRACKED_RATIO</td><td>config.py:60</td><td>0.4</td><td>不容易因质量差插 KF</td><td>频繁插 KF</td></tr>
+<tr><td>BA_WINDOW</td><td>config.py:63</td><td>3</td><td>BA 更全局，更慢</td><td>BA 更快，局部</td></tr>
+<tr><td>BA_MAX_ITER</td><td>config.py:64</td><td>10</td><td>BA 更精确，更慢</td><td>BA 更快</td></tr>
+<tr><td>SGBM_NUM_DISPARITIES</td><td>config.py:38</td><td>64</td><td>更远物体可测，更慢</td><td>只测近处物体</td></tr>
+</table>
+
+<!-- ====== 14. 控制流 ====== -->
+<h2>十四、控制流总结</h2>
+
+<div class="eq" style="text-align:left;line-height:1.8;font-family:monospace;padding:14px 20px;font-size:0.88em;">
+<span style="color:#fbbf24;font-weight:700;">运行命令</span><br>
+<br>
+<span style="color:#94a3b8;">$</span> python main.py<br>
+<span style="color:#94a3b8;">  │</span><br>
+<span style="color:#94a3b8;">  └──</span> SLAM.run()<br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;│</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;├──</span> dataset.load_stereo_pairs() &emsp;&emsp;<span style="color:#94a3b8;"># 一次加载所有图片</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;│</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;└──</span> <span class="kw">for</span> i <span class="kw">in</span> range(90): &emsp;&emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># 逐帧处理</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;│</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;├──</span> tracker.extract() &emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># ① ORB 特征</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;├──</span> tracker.match_ratio_test() &emsp;<span style="color:#94a3b8;"># ② 立体匹配</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;├──</span> mapping.triangulate_stereo() &emsp;<span style="color:#94a3b8;"># ③ 三角化</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;├──</span> tracker.match_ratio_test() &emsp;<span style="color:#94a3b8;"># ④ 帧间匹配</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;├──</span> tracker.estimate_pose_pnp() &emsp;<span style="color:#94a3b8;"># ⑤ PnP</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;├──</span> map.add_point() &emsp;&emsp;&emsp;&emsp;<span style="color:#94a3b8;"># ⑥ 新 3D 点</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;├──</span> mapping.is_keyframe() &emsp;&emsp;&emsp;<span style="color:#94a3b8;"># ⑦ 关键帧？</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;│</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;└──</span> 是 → optimizer.local_ba() + detect_loop()<br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;│</span><br>
+<span style="color:#94a3b8;">&emsp;&emsp;&emsp;└──</span> visualizer.save_frame() + 输出 csv
+</div>
+
+<div class="footer">
+从零学 SLAM · 完整实现路径 · 2025
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SLAM 可视化教程</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Microsoft YaHei', sans-serif; background: #0f0f1a; color: #e0e0e0; min-height: 100vh; }
+.header { background: linear-gradient(135deg, #1a1a3e, #2d1b4e); padding: 60px 20px; text-align: center; }
+.header h1 { font-size: 2.5em; background: linear-gradient(90deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.header p { color: #94a3b8; margin-top: 12px; font-size: 1.1em; }
+.grid { max-width: 1200px; margin: 40px auto; padding: 0 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+.card { background: #1e1e3a; border-radius: 16px; padding: 28px; text-decoration: none; color: inherit; border: 1px solid #2d2d5e; transition: all 0.3s; display: flex; flex-direction: column; }
+.card:hover { border-color: #60a5fa; transform: translateY(-4px); box-shadow: 0 8px 40px rgba(96,165,250,0.15); }
+.card .num { font-size: 0.8em; color: #60a5fa; font-weight: bold; }
+.card h3 { margin: 8px 0 10px; font-size: 1.15em; }
+.card p { color: #94a3b8; font-size: 0.9em; line-height: 1.6; flex: 1; }
+.card .tag { display: inline-block; margin-top: 12px; padding: 4px 12px; border-radius: 20px; font-size: 0.75em; align-self: flex-start; }
+.tag.math { background: #1e3a5f; color: #60a5fa; }
+.tag.cv { background: #3b1f4e; color: #a78bfa; }
+.tag.slam { background: #1f4e3a; color: #34d399; }
+.tag.prog { background: #4e3a1f; color: #fbbf24; }
+.footer { text-align: center; padding: 40px; color: #4a5568; font-size: 0.9em; }
+@media (max-width: 600px) { .header h1 { font-size: 1.8em; } .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="header">
+<h1>🎯 SLAM 可视化教程</h1>
+<p>每一个知识点都做成交互页面，拖拽、滑动、旋转——亲手"看"懂 SLAM</p>
+</div>
+
+<div class="grid">
+
+<a class="card" href="01_vectors.html">
+<span class="num">01</span>
+<h3>📐 向量运算</h3>
+<p>向量加法、点积、叉积的可视化。理解 3D 空间中的方向和距离。</p>
+<span class="tag math">数学基础</span>
+</a>
+
+<a class="card" href="02_rotation.html">
+<span class="num">02</span>
+<h3>🔄 旋转矩阵</h3>
+<p>用鼠标拖拽旋转一个 3D 物体，看旋转矩阵的每一列对应什么。</p>
+<span class="tag math">数学基础</span>
+</a>
+
+<a class="card" href="03_transformation.html">
+<span class="num">03</span>
+<h3>🏗️ 坐标变换</h3>
+<p>世界坐标 ↔ 相机坐标的变换。拖动滑块观察点的位置变化。</p>
+<span class="tag math">数学基础</span>
+</a>
+
+<a class="card" href="04_camera.html">
+<span class="num">04</span>
+<h3>📷 相机投影</h3>
+<p>3D 世界是怎么变成 2D 照片的。调焦距、看近大远小。</p>
+<span class="tag cv">计算机视觉</span>
+</a>
+
+<a class="card" href="05_stereo.html">
+<span class="num">05</span>
+<h3>👀 双目立体</h3>
+<p>左右两张图怎么算出深度。调基线长度看视差变化。</p>
+<span class="tag cv">计算机视觉</span>
+</a>
+
+<a class="card" href="06_matching.html">
+<span class="num">06</span>
+<h3>🔗 特征匹配</h3>
+<p>ORB 特征是怎么匹配的。动手调比率测试阈值。</p>
+<span class="tag cv">计算机视觉</span>
+</a>
+
+<a class="card" href="07_pnp.html">
+<span class="num">07</span>
+<h3>🎯 PnP 位姿估计</h3>
+<p>已知 3D 点和 2D 投影，反推相机位姿。看 RANSAC 如何剔除误匹配。</p>
+<span class="tag slam">SLAM 核心</span>
+</a>
+
+<a class="card" href="08_triangulation.html">
+<span class="num">08</span>
+<h3>📐 三角化</h3>
+<p>从两个视角恢复 3D 点。看视差大小对深度精度的影响。</p>
+<span class="tag slam">SLAM 核心</span>
+</a>
+
+<a class="card" href="09_covariance.html">
+<span class="num">09</span>
+<h3>📊 协方差矩阵</h3>
+<p>拖动滑块改变协方差矩阵，看数据椭圆的形状怎么变。</p>
+<span class="tag math">数学基础</span>
+</a>
+
+<a class="card" href="10_ba.html">
+<span class="num">10</span>
+<h3>🔧 束调整 (BA)</h3>
+<p>BA 是怎么同时优化位姿和 3D 点的。看误差在优化中逐步减小。</p>
+<span class="tag slam">SLAM 核心</span>
+</a>
+
+</div>
+
+<div class="footer">
+用 Three.js 构建 · 拖拽旋转 · 滑动调参 · 小白友好
+</div>
+</body>
+</html>

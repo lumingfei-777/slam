@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>02 - 旋转矩阵</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #0f0f1a; color: #e0e0e0; overflow: hidden; height: 100vh; }
+#container { display: flex; height: 100vh; }
+#canvas-wrap { flex: 1; position: relative; }
+#canvas-wrap canvas { display: block; }
+#panel { width: 420px; background: #1a1a35; padding: 28px; overflow-y: auto; border-left: 1px solid #2d2d5e; }
+#panel h2 { color: #60a5fa; margin-bottom: 4px; }
+#panel .sub { color: #94a3b8; font-size: 0.9em; margin-bottom: 20px; }
+.ctrl { margin-bottom: 16px; background: #252550; border-radius: 12px; padding: 16px; }
+.ctrl h4 { color: #a78bfa; font-size: 0.85em; margin-bottom: 10px; }
+.axis-group { display: flex; gap: 12px; align-items: center; }
+.axis-group label { width: 20px; font-weight: bold; }
+.axis-group input[type=range] { flex: 1; accent-color: #60a5fa; }
+.axis-group .val { min-width: 36px; text-align: right; font-family: monospace; font-size: 0.85em; }
+.matrix-box { background: #0f0f1a; border-radius: 8px; padding: 12px 16px; font-family: monospace; font-size: 0.95em; line-height: 1.8; text-align: center; border: 1px solid #2d2d5e; }
+.matrix-box .row { color: #94a3b8; }
+.matrix-box .row span { display: inline-block; min-width: 60px; }
+.col-red { color: #ff6b6b !important; }
+.col-green { color: #51cf66 !important; }
+.col-blue { color: #4dabf7 !important; }
+.btn-group { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.85em; transition: 0.2s; }
+.btn.primary { background: #2563eb; color: white; }
+.btn.secondary { background: #4a4a7a; color: #e0e0e0; }
+.info-box { background: #252550; border-radius: 12px; padding: 16px; margin-top: 16px; font-size: 0.85em; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div id="container">
+<div id="canvas-wrap"></div>
+<div id="panel">
+<h2>🔄 旋转矩阵</h2>
+<div class="sub">拖动滑块旋转立方体，观察旋转矩阵的变化</div>
+
+<div class="ctrl">
+<h4>绕 X 轴 (红色)</h4>
+<div class="axis-group"><label style="color:#ff6b6b">θ</label><input type="range" id="rx" min="-180" max="180" value="30" step="1"><span class="val" id="rxv">30°</span></div>
+</div>
+<div class="ctrl">
+<h4>绕 Y 轴 (绿色)</h4>
+<div class="axis-group"><label style="color:#51cf66">θ</label><input type="range" id="ry" min="-180" max="180" value="-20" step="1"><span class="val" id="ryv">-20°</span></div>
+</div>
+<div class="ctrl">
+<h4>绕 Z 轴 (蓝色)</h4>
+<div class="axis-group"><label style="color:#4dabf7">θ</label><input type="range" id="rz" min="-180" max="180" value="15" step="1"><span class="val" id="rzv">15°</span></div>
+</div>
+
+<div class="btn-group">
+<button class="btn primary" id="animateBtn">▶ 自动旋转</button>
+<button class="btn secondary" id="resetBtn">重置</button>
+</div>
+
+<div class="ctrl">
+<h4>旋转矩阵 R = Rz · Ry · Rx</h4>
+<div class="matrix-box" id="matrixDisplay">
+<div class="row"><span class="col-red" id="m00">1.00</span> <span class="col-green" id="m01">0.00</span> <span class="col-blue" id="m02">0.00</span></div>
+<div class="row"><span class="col-red" id="m10">0.00</span> <span class="col-green" id="m11">1.00</span> <span class="col-blue" id="m12">0.00</span></div>
+<div class="row"><span class="col-red" id="m20">0.00</span> <span class="col-green" id="m21">0.00</span> <span class="col-blue" id="m22">1.00</span></div>
+</div>
+</div>
+
+<div class="info-box">
+<strong>💡 每一列 = 坐标轴方向</strong><br>
+<span class="col-red">第1列: X轴在世界坐标中的方向</span><br>
+<span class="col-green">第2列: Y轴在世界坐标中的方向</span><br>
+<span class="col-blue">第3列: Z轴在世界坐标中的方向</span>
+</div>
+</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const panel = document.getElementById('canvas-wrap');
+const w = panel.clientWidth, h = panel.clientHeight;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f0f1a);
+const camera = new THREE.PerspectiveCamera(45, w/h, 0.1, 50);
+camera.position.set(6, 5, 8);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(w, h);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+panel.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0,0,0);
+
+// Grid
+const grid = new THREE.GridHelper(10, 10, 0x4a4a7a, 0x2d2d5e);
+scene.add(grid);
+new THREE.AxesHelper(5);
+const axesHelper = new THREE.AxesHelper(5);
+scene.add(axesHelper);
+
+// Cube with colored faces
+const cubeGeo = new THREE.BoxGeometry(2, 2, 2);
+const cubeMat = [
+    new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, opacity: 0.7 }), // right - red
+    new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, opacity: 0.3 }), // left
+    new THREE.MeshBasicMaterial({ color: 0x51cf66, transparent: true, opacity: 0.7 }), // top - green
+    new THREE.MeshBasicMaterial({ color: 0x51cf66, transparent: true, opacity: 0.3 }), // bottom
+    new THREE.MeshBasicMaterial({ color: 0x4dabf7, transparent: true, opacity: 0.7 }), // front - blue
+    new THREE.MeshBasicMaterial({ color: 0x4dabf7, transparent: true, opacity: 0.3 }), // back
+];
+const cube = new THREE.Mesh(cubeGeo, cubeMat);
+scene.add(cube);
+
+// Edges
+const edges = new THREE.EdgesGeometry(cubeGeo);
+const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff });
+const wireframe = new THREE.LineSegments(edges, lineMat);
+cube.add(wireframe);
+
+// Coordinate axes on cube
+const axLen = 1.5;
+const axH = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), axLen, 0xff6b6b, 0.3, 0.15);
+const axG = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), axLen, 0x51cf66, 0.3, 0.15);
+const axB = new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), axLen, 0x4dabf7, 0.3, 0.15);
+cube.add(axH); cube.add(axG); cube.add(axB);
+
+let animating = false;
+let animId = null;
+
+function updateRotation() {
+    const rx = parseFloat(document.getElementById('rx').value) * Math.PI / 180;
+    const ry = parseFloat(document.getElementById('ry').value) * Math.PI / 180;
+    const rz = parseFloat(document.getElementById('rz').value) * Math.PI / 180;
+
+    document.getElementById('rxv').textContent = document.getElementById('rx').value + '°';
+    document.getElementById('ryv').textContent = document.getElementById('ry').value + '°';
+    document.getElementById('rzv').textContent = document.getElementById('rz').value + '°';
+
+    cube.rotation.set(rx, ry, rz, 'XYZ');
+
+    const R = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rx, ry, rz, 'XYZ'));
+    const e = R.elements;
+    const fmt = (v) => v.toFixed(3);
+    document.getElementById('m00').textContent = fmt(e[0]); document.getElementById('m01').textContent = fmt(e[4]); document.getElementById('m02').textContent = fmt(e[8]);
+    document.getElementById('m10').textContent = fmt(e[1]); document.getElementById('m11').textContent = fmt(e[5]); document.getElementById('m12').textContent = fmt(e[9]);
+    document.getElementById('m20').textContent = fmt(e[2]); document.getElementById('m21').textContent = fmt(e[6]); document.getElementById('m22').textContent = fmt(e[7]);
+}
+
+['rx','ry','rz'].forEach(id => document.getElementById(id).oninput = () => { if (!animating) updateRotation(); });
+
+document.getElementById('animateBtn').onclick = function() {
+    animating = !animating;
+    this.textContent = animating ? '⏸ 暂停' : '▶ 自动旋转';
+    if (animating) animateRotation();
+};
+
+function animateRotation() {
+    if (!animating) return;
+    let r = parseFloat(document.getElementById('ry').value) + 2;
+    if (r > 180) r = -180;
+    document.getElementById('ry').value = r;
+    updateRotation();
+    animId = requestAnimationFrame(animateRotation);
+}
+
+document.getElementById('resetBtn').onclick = () => {
+    if (animating) { animating = false; document.getElementById('animateBtn').textContent = '▶ 自动旋转'; }
+    document.getElementById('rx').value = 0;
+    document.getElementById('ry').value = 0;
+    document.getElementById('rz').value = 0;
+    updateRotation();
+};
+
+function render() {
+    requestAnimationFrame(render);
+    controls.update();
+    renderer.render(scene, camera);
+}
+render();
+updateRotation();
+
+window.addEventListener('resize', () => {
+    const w2 = panel.clientWidth, h2 = panel.clientHeight;
+    camera.aspect = w2/h2; camera.updateProjectionMatrix();
+    renderer.setSize(w2, h2);
+});
+</script>
+</body>
+</html>

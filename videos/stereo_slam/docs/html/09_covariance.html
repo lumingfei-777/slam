@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>09 - 协方差矩阵</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #0f0f1a; color: #e0e0e0; }
+#container { max-width: 1000px; margin: 0 auto; padding: 30px 20px; }
+h1 { color: #60a5fa; text-align: center; margin-bottom: 6px; }
+.sub { color: #94a3b8; text-align: center; margin-bottom: 30px; }
+.main-viz { background: #1a1a35; border-radius: 16px; padding: 24px; margin-bottom: 20px; }
+.main-viz canvas { width: 100%; aspect-ratio: 1/1; display: block; background: #0f0f1a; border-radius: 8px; }
+.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.ctrl { background: #252550; border-radius: 12px; padding: 16px; }
+.ctrl h4 { color: #a78bfa; font-size: 0.85em; margin-bottom: 8px; }
+.slider-box { display: flex; align-items: center; gap: 10px; font-size: 0.85em; margin-bottom: 6px; }
+.slider-box input[type=range] { flex: 1; accent-color: #60a5fa; }
+.slider-box .val { min-width: 36px; text-align: right; font-family: monospace; color: #e0e0e0; }
+.matrix-display { text-align: center; font-family: monospace; font-size: 1em; line-height: 1.8; background: #0f0f1a; border-radius: 8px; padding: 12px; margin-top: 8px; }
+.matrix-display .label { color: #94a3b8; font-size: 0.8em; }
+.matrix-display .row span { display: inline-block; min-width: 50px; }
+.val-red { color: #ff6b6b; }
+.val-green { color: #51cf66; }
+.val-blue { color: #4dabf7; }
+.val-white { color: #e0e0e0; }
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+.info-card { background: #252550; border-radius: 12px; padding: 16px; }
+.info-card h4 { color: #a78bfa; font-size: 0.85em; margin-bottom: 6px; }
+.info-card .val { font-size: 1.2em; font-weight: bold; }
+.eig-dir { display: flex; align-items: center; gap: 16px; margin-top: 8px; }
+.eig-dir .bar { height: 8px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="container">
+<h1>📊 协方差矩阵</h1>
+<div class="sub">拖动滑块改变协方差矩阵，观察数据椭圆的形状变化</div>
+
+<div class="main-viz">
+<canvas id="covCanvas"></canvas>
+</div>
+
+<div class="controls">
+<div class="ctrl">
+<h4>📏 各方向方差</h4>
+<div class="slider-box"><span style="color:#ff6b6b">σ₁₁</span><input type="range" id="s11" min="0.2" max="4" value="2" step="0.1"><span class="val" id="s11v">2.0</span></div>
+<div class="slider-box"><span style="color:#51cf66">σ₂₂</span><input type="range" id="s22" min="0.2" max="4" value="1" step="0.1"><span class="val" id="s22v">1.0</span></div>
+</div>
+<div class="ctrl">
+<h4>🔄 协方差（相关性）</h4>
+<div class="slider-box"><span style="color:#fbbf24">σ₁₂ = σ₂₁</span><input type="range" id="s12" min="-3" max="3" value="0.5" step="0.1"><span class="val" id="s12v">0.5</span></div>
+</div>
+</div>
+
+<div class="matrix-display">
+<div class="label">协方差矩阵 Σ</div>
+<div class="row">
+[ <span class="val-red" id="m00">2.0</span> <span class="val-white" id="m01">0.5</span> ]
+</div>
+<div class="row">
+[ <span class="val-white" id="m10">0.5</span> <span class="val-green" id="m11">1.0</span> ]
+</div>
+</div>
+
+<div class="info-grid">
+<div class="info-card">
+<h4>📐 主轴方向</h4>
+<div id="eigVecDisplay">
+第 1 主轴: (0.92, 0.38) <span style="color:#60a5fa">λ=2.21</span><br>
+第 2 主轴: (-0.38, 0.92) <span style="color:#60a5fa">λ=0.79</span>
+</div>
+</div>
+<div class="info-card">
+<h4>🎯 偏心率</h4>
+<div class="val" id="eccentricity">0.64</div>
+<div style="font-size:0.85em;color:#94a3b8;margin-top:4px;">0 = 圆形, 1 = 一条线</div>
+</div>
+</div>
+
+<div class="explanation" style="background:#1a1a35;border-radius:16px;padding:24px;margin-top:20px;line-height:1.9;font-size:0.92em;">
+<strong>💡 协方差矩阵的几何意义</strong><br><br>
+<span style="color:#ff6b6b">σ₁₁</span> = X 方向的方差 → 控制椭圆在 X 方向的展宽<br>
+<span style="color:#51cf66">σ₂₂</span> = Y 方向的方差 → 控制椭圆在 Y 方向的展宽<br>
+<span style="color:#fbbf24">σ₁₂</span> = X 和 Y 的协方差 → 控制椭圆的旋转<br><br>
+<strong>特征向量</strong> = 椭圆的主轴方向<br>
+<strong>特征值</strong> = 主轴方向的展宽（越大=越不确定）
+</div>
+</div>
+
+<script>
+const canvas = document.getElementById('covCanvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+    canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+}
+resize();
+
+function drawEllipse(cx, cy, a, b, angle, color='#60a5fa', fill=true) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, a, b, 0, 0, 2 * Math.PI);
+    if (fill) {
+        ctx.fillStyle = color + '30';
+        ctx.fill();
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+}
+
+function draw() {
+    const w = canvas.width / (window.devicePixelRatio || 1);
+    const h = canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = '#0f0f1a';
+    ctx.fillRect(0, 0, w, h);
+
+    const s11 = parseFloat(document.getElementById('s11').value);
+    const s22 = parseFloat(document.getElementById('s22').value);
+    const s12 = parseFloat(document.getElementById('s12').value);
+
+    document.getElementById('s11v').textContent = s11.toFixed(1);
+    document.getElementById('s22v').textContent = s22.toFixed(1);
+    document.getElementById('s12v').textContent = s12.toFixed(1);
+
+    document.getElementById('m00').textContent = s11.toFixed(2);
+    document.getElementById('m01').textContent = s12.toFixed(2);
+    document.getElementById('m10').textContent = s12.toFixed(2);
+    document.getElementById('m11').textContent = s22.toFixed(2);
+
+    // Generate random data points from multivariate normal
+    const n = 500;
+    const data = [];
+    for (let i = 0; i < n; i++) {
+        // Box-Muller transform
+        const u1 = Math.random(), u2 = Math.random();
+        const z1 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+        const z2 = Math.sqrt(-2 * Math.log(u1)) * Math.sin(2 * Math.PI * u2);
+        // Cholesky decomposition
+        // L = [[sqrt(s11), 0], [s12/sqrt(s11), sqrt(s22 - s12²/s11)]]
+        const L11 = Math.sqrt(s11);
+        if (s11 <= 0) continue;
+        const L21 = s12 / L11;
+        const det = s22 - L21 * L21;
+        if (det <= 0) continue;
+        const L22 = Math.sqrt(det);
+        data.push([z1 * L11, z1 * L21 + z2 * L22]);
+    }
+
+    // Determine scaling
+    let maxVal = 0;
+    for (const d of data) {
+        const a = Math.abs(d[0]), b = Math.abs(d[1]);
+        if (a > maxVal) maxVal = a;
+        if (b > maxVal) maxVal = b;
+    }
+    maxVal = Math.max(maxVal, 3);
+
+    const padding = 60;
+    const plotW = w - 2 * padding;
+    const plotH = h - 2 * padding;
+    const cx = w / 2, cy = h / 2;
+    const scale = Math.min(plotW, plotH) / (2 * maxVal * 1.2);
+
+    // Draw grid
+    ctx.strokeStyle = '#1a1a35';
+    ctx.lineWidth = 1;
+    for (let v = -Math.ceil(maxVal); v <= Math.ceil(maxVal); v++) {
+        if (v === 0) continue;
+        const px = cx + v * scale * maxVal / Math.ceil(maxVal);
+        ctx.beginPath(); ctx.moveTo(px, padding); ctx.lineTo(px, h - padding); ctx.stroke();
+        const py = cy + v * scale * maxVal / Math.ceil(maxVal);
+        ctx.beginPath(); ctx.moveTo(padding, py); ctx.lineTo(w - padding, py); ctx.stroke();
+    }
+
+    // Axes
+    ctx.strokeStyle = '#4a4a7a';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(padding, cy); ctx.lineTo(w - padding, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, padding); ctx.lineTo(cx, h - padding); ctx.stroke();
+
+    // Labels
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center'; ctx.fillText('X', w - padding + 20, cy + 4);
+    ctx.textAlign = 'center'; ctx.fillText('Y', cx, padding - 12);
+
+    // Draw data points
+    const s = Math.min(scale * 0.6, 3);
+    for (const d of data) {
+        const px = cx + d[0] * scale;
+        const py = cy - d[1] * scale;
+        ctx.fillStyle = '#60a5fa';
+        ctx.globalAlpha = 0.15;
+        ctx.beginPath(); ctx.arc(px, py, s, 0, 2 * Math.PI); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Draw ellipse (1-sigma, 2-sigma)
+    // Compute eigenvalues and eigenvectors
+    const trace = s11 + s22;
+    const det = s11 * s22 - s12 * s12;
+    const disc = Math.sqrt(Math.max(0, (s11 - s22) * (s11 - s22) + 4 * s12 * s12));
+    const lambda1 = (trace + disc) / 2;
+    const lambda2 = Math.max((trace - disc) / 2, 0.01);
+
+    let angle = 0;
+    if (Math.abs(s12) > 0.001) {
+        angle = Math.atan2(lambda1 - s11, s12);
+    } else if (s11 > s22) {
+        angle = 0;
+    } else {
+        angle = Math.PI / 2;
+    }
+
+    const eig1 = Math.sqrt(lambda1) * scale * 2;
+    const eig2 = Math.sqrt(lambda2) * scale * 2;
+
+    // 2-sigma ellipse
+    drawEllipse(cx, cy, Math.sqrt(lambda1) * scale * 2, Math.sqrt(lambda2) * scale * 2, angle, '#a78bfa', true);
+    // 1-sigma ellipse
+    drawEllipse(cx, cy, Math.sqrt(lambda1) * scale, Math.sqrt(lambda2) * scale, angle, '#60a5fa', true);
+
+    // Draw eigenvectors
+    const v1x = Math.cos(angle) * Math.sqrt(lambda1) * scale * 2.2;
+    const v1y = -Math.sin(angle) * Math.sqrt(lambda1) * scale * 2.2;
+    const v2x = -Math.sin(angle) * Math.sqrt(lambda2) * scale * 2.2;
+    const v2y = -Math.cos(angle) * Math.sqrt(lambda2) * scale * 2.2;
+
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + v1x, cy + v1y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + v2x, cy + v2y); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Eigenvector labels
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`v₁ (λ=${lambda1.toFixed(2)})`, cx + v1x, cy + v1y - 8);
+    ctx.fillText(`v₂ (λ=${lambda2.toFixed(2)})`, cx + v2x, cy + v2y - 8);
+
+    // Display eigenvectors
+    const e1x = Math.cos(angle), e1y = Math.sin(angle);
+    const e2x = -Math.sin(angle), e2y = Math.cos(angle);
+    document.getElementById('eigVecDisplay').innerHTML =
+        `第 1 主轴: (${e1x.toFixed(2)}, ${e1y.toFixed(2)}) <span style="color:#60a5fa">λ=${lambda1.toFixed(2)}</span><br>` +
+        `第 2 主轴: (${e2x.toFixed(2)}, ${e2y.toFixed(2)}) <span style="color:#60a5fa">λ=${lambda2.toFixed(2)}</span>`;
+
+    // Eccentricity
+    const ecc = Math.sqrt(1 - Math.min(lambda1, lambda2) / Math.max(lambda1, lambda2));
+    document.getElementById('eccentricity').textContent = isNaN(ecc) ? '0.00' : ecc.toFixed(2);
+}
+
+['s11','s22','s12'].forEach(id => document.getElementById(id).oninput = draw);
+draw();
+
+window.addEventListener('resize', () => { resize(); draw(); });
+</script>
+</body>
+</html>

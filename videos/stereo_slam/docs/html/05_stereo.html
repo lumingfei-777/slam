@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>05 - 双目立体视觉</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #0f0f1a; color: #e0e0e0; }
+#container { max-width: 1000px; margin: 0 auto; padding: 30px 20px; }
+h1 { color: #60a5fa; text-align: center; margin-bottom: 6px; }
+.sub { color: #94a3b8; text-align: center; margin-bottom: 30px; }
+.main-viz { background: #1a1a35; border-radius: 16px; padding: 24px; margin-bottom: 20px; }
+.main-viz canvas { width: 100%; aspect-ratio: 4/3; display: block; background: #0f0f1a; border-radius: 8px; }
+.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.ctrl { background: #252550; border-radius: 12px; padding: 16px; }
+.ctrl h4 { color: #a78bfa; font-size: 0.85em; margin-bottom: 8px; }
+.slider-box { display: flex; align-items: center; gap: 10px; font-size: 0.85em; }
+.slider-box input[type=range] { flex: 1; accent-color: #60a5fa; }
+.slider-box .val { min-width: 40px; text-align: right; font-family: monospace; color: #e0e0e0; }
+.info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.info-card { background: #252550; border-radius: 12px; padding: 16px; text-align: center; }
+.info-card .num { font-size: 1.8em; font-weight: bold; color: #fbbf24; }
+.info-card .label { font-size: 0.8em; color: #94a3b8; margin-top: 4px; }
+.explanation { background: #1a1a35; border-radius: 16px; padding: 24px; margin-top: 20px; line-height: 1.9; font-size: 0.92em; }
+.explanation .hl { color: #fbbf24; }
+.explanation .formula { text-align: center; font-size: 1.2em; padding: 12px; background: #0f0f1a; border-radius: 8px; margin: 10px 0; font-family: monospace; color: #60a5fa; }
+@media (max-width: 700px) { .controls, .info-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div id="container">
+<h1>👀 双目立体视觉</h1>
+<div class="sub">左右两张图 → 视差 → 深度</div>
+
+<div class="main-viz">
+<canvas id="stereoCanvas"></canvas>
+</div>
+
+<div class="controls">
+<div class="ctrl">
+<h4>📏 基线距离</h4>
+<div class="slider-box"><span>短</span><input type="range" id="baseline" min="30" max="200" value="95" step="5"><span class="val" id="baselinev">95mm</span><span>长</span></div>
+</div>
+<div class="ctrl">
+<h4>📐 物体距离</h4>
+<div class="slider-box"><span>近</span><input type="range" id="objDist" min="1000" max="10000" value="3000" step="100"><span class="val" id="objDistv">3.0m</span><span>远</span></div>
+</div>
+</div>
+
+<div class="info-grid">
+<div class="info-card"><div class="num" id="disparityVal">0.0</div><div class="label">视差 (像素)</div></div>
+<div class="info-card"><div class="num" id="depthVal">0.0</div><div class="label">深度 (mm)</div></div>
+<div class="info-card"><div class="num" id="errorVal">0</div><div class="label">深度误差 (±%)</div></div>
+</div>
+
+<div class="explanation" id="explanation">
+<strong>💡 核心原理</strong><br><br>
+<div class="formula">Z = f × B / d</div><br>
+Z = 深度 &nbsp; f = 焦距 &nbsp; B = 基线 &nbsp; d = 视差<br><br>
+<span class="hl">视差越大 → 物体越近</span><br>
+<span class="hl">基线越长 → 深度越精确</span><br>
+<span class="hl">物体越远 → 视差越小 → 深度误差越大</span>
+</div>
+</div>
+
+<script>
+const canvas = document.getElementById('stereoCanvas');
+const ctx = canvas.getContext('2d');
+const rect = canvas.parentElement.getBoundingClientRect();
+canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+
+function draw() {
+    const w = canvas.width / (window.devicePixelRatio || 1);
+    const h = canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = '#0f0f1a';
+    ctx.fillRect(0, 0, w, h);
+
+    const baseline = parseFloat(document.getElementById('baseline').value);
+    const objDist = parseFloat(document.getElementById('objDist').value);
+    document.getElementById('baselinev').textContent = baseline + 'mm';
+    document.getElementById('objDistv').textContent = (objDist/1000).toFixed(1) + 'm';
+
+    const focal = 596;
+    const disparity = focal * baseline / objDist;
+    document.getElementById('disparityVal').textContent = disparity.toFixed(1);
+    document.getElementById('depthVal').textContent = objDist.toFixed(0);
+
+    // Depth error (1 pixel disparity noise)
+    const depthErr = (objDist * objDist) / (focal * baseline) * 1;
+    const errPct = (depthErr / objDist * 100);
+    document.getElementById('errorVal').textContent = errPct.toFixed(1);
+
+    const cx = w / 2;
+    const cy = h / 2;
+    const halfSep = baseline * 0.3;
+
+    // Draw "cameras"
+    function drawCamera(x, y, label, color) {
+        ctx.fillStyle = color;
+        ctx.fillRect(x-10, y-15, 20, 30);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x, y + 40);
+    }
+
+    const camY = h * 0.75;
+    drawCamera(cx - halfSep, camY, '左', '#60a5fa');
+    drawCamera(cx + halfSep, camY, '右', '#60a5fa');
+
+    // Baseline line
+    ctx.strokeStyle = '#4a4a7a';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(cx - halfSep, camY + 20); ctx.lineTo(cx + halfSep, camY + 20); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`基线 = ${baseline}mm`, cx, camY + 36);
+
+    // Object position
+    const objY = h * 0.35;
+    const objSize = 60 * (1 - objDist / 12000);
+
+    // Draw epipolar lines
+    ctx.strokeStyle = '#2d2d5e';
+    ctx.setLineDash([2, 4]);
+    ctx.beginPath(); ctx.moveTo(0, objY); ctx.lineTo(w, objY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Object on left image
+    const leftObjX = cx - halfSep + (baseline / objDist) * 100;
+    const rightObjX = cx + halfSep - (baseline / objDist) * 100;
+
+    // Draw "images" at top
+    const imgH = h * 0.22;
+    const imgY = h * 0.03;
+    const imgW = w * 0.35;
+
+    function drawImage(x, y, label, objX, color) {
+        ctx.strokeStyle = '#2d2d5e';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, imgW, imgH);
+        ctx.fillStyle = '#1a1a35';
+        ctx.fillRect(x+1, y+1, imgW-2, imgH-2);
+
+        // Object in image
+        const imgObjX = x + (objX / w) * imgW;
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(imgObjX, y + imgH/2, 6, 0, 2*Math.PI); ctx.fill();
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x + imgW/2, y - 6);
+    }
+
+    drawImage(w*0.12, imgY, '左图', leftObjX, '#ff6b6b');
+    drawImage(w*0.53, imgY, '右图', rightObjX, '#51cf66');
+
+    // Disparity arrow
+    const leftImgX = w*0.12 + (leftObjX / w) * imgW;
+    const rightImgX = w*0.53 + (rightObjX / w) * imgW;
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(leftImgX, imgY + imgH/2); ctx.lineTo(rightImgX, imgY + imgH/2); ctx.stroke();
+
+    // Arrow heads
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath(); ctx.moveTo(leftImgX + 5, imgY + imgH/2 - 4); ctx.lineTo(leftImgX, imgY + imgH/2); ctx.lineTo(leftImgX + 5, imgY + imgH/2 + 4); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(rightImgX - 5, imgY + imgH/2 - 4); ctx.lineTo(rightImgX, imgY + imgH/2); ctx.lineTo(rightImgX - 5, imgY + imgH/2 + 4); ctx.fill();
+
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`视差 d = ${disparity.toFixed(1)} px`, (leftImgX + rightImgX)/2, imgY + imgH/2 - 10);
+
+    // Object at distance
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath(); ctx.arc(cx, objY, Math.max(objSize * 0.5, 8), 0, 2*Math.PI); ctx.fill();
+
+    // Rays from left camera
+    ctx.strokeStyle = '#ff6b6b';
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.2;
+    ctx.beginPath(); ctx.moveTo(cx - halfSep, camY); ctx.lineTo(leftObjX, objY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx - halfSep, camY); ctx.lineTo(cx, objY); ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Rays from right camera
+    ctx.strokeStyle = '#51cf66';
+    ctx.globalAlpha = 0.2;
+    ctx.beginPath(); ctx.moveTo(cx + halfSep, camY); ctx.lineTo(rightObjX, objY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx + halfSep, camY); ctx.lineTo(cx, objY); ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Depth value label
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${(objDist/1000).toFixed(1)}m`, cx, objY - 20);
+}
+
+document.getElementById('baseline').oninput = draw;
+document.getElementById('objDist').oninput = draw;
+draw();
+
+window.addEventListener('resize', () => {
+    const rect2 = canvas.parentElement.getBoundingClientRect();
+    canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+    canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+    draw();
+});
+</script>
+</body>
+</html>

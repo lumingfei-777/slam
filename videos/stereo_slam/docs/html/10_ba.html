@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>10 - 束调整 (BA)</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #0f0f1a; color: #e0e0e0; }
+#container { max-width: 1000px; margin: 0 auto; padding: 30px 20px; }
+h1 { color: #60a5fa; text-align: center; margin-bottom: 6px; }
+.sub { color: #94a3b8; text-align: center; margin-bottom: 24px; }
+.main-viz { background: #1a1a35; border-radius: 16px; padding: 20px; margin-bottom: 16px; }
+canvas { width: 100%; aspect-ratio: 4/3; display: block; background: #0f0f1a; border-radius: 8px; }
+.controls { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+.ctrl { background: #252550; border-radius: 12px; padding: 16px; flex: 1; min-width: 200px; }
+.ctrl h4 { color: #a78bfa; font-size: 0.85em; margin-bottom: 8px; }
+.btn { padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.95em; }
+.btn.primary { background: #2563eb; color: white; }
+.btn.primary:hover { background: #3b82f6; }
+.btn.danger { background: #dc2626; color: white; }
+.info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 16px; }
+.card { background: #252550; border-radius: 12px; padding: 16px; text-align: center; }
+.card .num { font-size: 1.5em; font-weight: bold; }
+.card .num.green { color: #51cf66; }
+.card .num.red { color: #ff6b6b; }
+.card .lbl { font-size: 0.8em; color: #94a3b8; margin-top: 4px; }
+.explanation { background: #1a1a35; border-radius: 16px; padding: 24px; margin-top: 20px; line-height: 1.9; font-size: 0.92em; }
+</style>
+</head>
+<body>
+<div id="container">
+<h1>🔧 束调整 (Bundle Adjustment)</h1>
+<div class="sub">同时优化所有相机位姿和 3D 点，让重投影误差最小</div>
+
+<div class="main-viz">
+<canvas id="baCanvas"></canvas>
+</div>
+
+<div class="controls" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+<div class="ctrl" style="flex:0 0 auto;">
+<h4>⏭️ 优化步骤</h4>
+<div style="display:flex;gap:8px;">
+<button class="btn primary" id="stepBtn">▶ 下一步</button>
+<button class="btn danger" id="resetBtn">↺ 重置</button>
+</div>
+</div>
+<div class="ctrl" style="flex:1;">
+<h4>📈 当前迭代</h4>
+<div style="color:#e0e0e0;font-size:0.9em;">第 <span class="hl" id="iterNum">0</span> 步</div>
+</div>
+</div>
+
+<div class="info-grid">
+<div class="card"><div class="num" id="beforeError">0</div><div class="lbl">优化前误差</div></div>
+<div class="card"><div class="num green" id="afterError">0</div><div class="lbl">优化后误差</div></div>
+<div class="card"><div class="num" id="reduction" style="color:#a78bfa">-</div><div class="lbl">误差下降</div></div>
+</div>
+
+<div class="explanation">
+<strong>💡 BA 做了什么</strong><br><br>
+<div style="text-align:center;font-family:monospace;font-size:1em;background:#0f0f1a;border-radius:8px;padding:12px;margin:10px 0;color:#fbbf24;">
+min Σ || 像素观测 - 投影(位姿, 3D点) ||²
+</div><br>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+<div style="background:#252550;border-radius:8px;padding:14px;">
+<strong style="color:#ff6b6b;">❌ 优化前</strong><br>
+位姿和 3D 点不准<br>
+重投影误差很大<br>
+3D 点和观测不匹配
+</div>
+<div style="background:#252550;border-radius:8px;padding:14px;">
+<strong style="color:#51cf66;">✅ 优化后</strong><br>
+位姿和 3D 点都调准了<br>
+重投影误差变小<br>
+光线汇聚到真正的 3D 点
+</div>
+</div>
+</div>
+</div>
+
+<script>
+const canvas = document.getElementById('baCanvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+    const r = canvas.parentElement.getBoundingClientRect();
+    canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+    canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+}
+resize();
+
+// BA simulation data
+const numCams = 5;
+const numPts = 15;
+
+// True positions
+const trueCams = [];
+const truePts = [];
+for (let i = 0; i < numCams; i++) {
+    trueCams.push({ x: (i - 2) * 1.5, y: 0, z: 0 });
+}
+for (let i = 0; i < numPts; i++) {
+    truePts.push({
+        x: (Math.random() - 0.5) * 6,
+        y: (Math.random() - 0.5) * 4 + 1,
+        z: 3 + Math.random() * 4
+    });
+}
+
+// Initial estimates (with errors)
+const initCams = JSON.parse(JSON.stringify(trueCams));
+const initPts = JSON.parse(JSON.stringify(truePts));
+
+// Add error to initial positions
+for (const c of initCams) {
+    c.x += (Math.random() - 0.5) * 1.5;
+    c.y += (Math.random() - 0.5) * 0.5;
+    c.z += (Math.random() - 0.5) * 0.3;
+}
+for (const p of initPts) {
+    p.x += (Math.random() - 0.5) * 2;
+    p.y += (Math.random() - 0.5) * 1.5;
+    p.z += (Math.random() - 0.5) * 2;
+}
+
+// Generate observations (which camera sees which point)
+const obs = [];
+for (let ci = 0; ci < numCams; ci++) {
+    for (let pi = 0; pi < numPts; pi++) {
+        if (Math.random() < 0.5) continue;
+        // True 2D projection
+        const pt = truePts[pi];
+        const cam = trueCams[ci];
+        const dx = pt.x - cam.x;
+        const dy = pt.y - cam.y;
+        const dz = pt.z - cam.z;
+        const u = 400 + 600 * dx / dz + (Math.random() - 0.5) * 1;
+        const v = 300 + 600 * dy / dz + (Math.random() - 0.5) * 1;
+        obs.push({ ci, pi, u, v });
+    }
+}
+
+let currentIter = 0;
+const maxIter = 8;
+let currentCams = JSON.parse(JSON.stringify(initCams));
+let currentPts = JSON.parse(JSON.stringify(initPts));
+
+function computeError(cams, pts) {
+    let totalErr = 0;
+    let count = 0;
+    for (const o of obs) {
+        const cam = cams[o.ci];
+        const pt = pts[o.pi];
+        const dx = pt.x - cam.x;
+        const dy = pt.y - cam.y;
+        const dz = pt.z - cam.z;
+        if (dz <= 0) continue;
+        const u_proj = 400 + 600 * dx / dz;
+        const v_proj = 300 + 600 * dy / dz;
+        const err = Math.sqrt((u_proj - o.u)**2 + (v_proj - o.v)**2);
+        totalErr += err;
+        count++;
+    }
+    return count > 0 ? totalErr / count : 0;
+}
+
+const initError = computeError(initCams, initPts);
+document.getElementById('beforeError').textContent = initError.toFixed(2) + 'px';
+
+function doBAIteration() {
+    if (currentIter >= maxIter) return;
+
+    // Simple gradient descent simulation: move toward true positions
+    const lr = 0.3 * (1 - currentIter / maxIter);
+
+    // Update cameras
+    for (let ci = 0; ci < numCams; ci++) {
+        currentCams[ci].x += (trueCams[ci].x - currentCams[ci].x) * lr;
+        currentCams[ci].y += (trueCams[ci].y - currentCams[ci].y) * lr;
+        currentCams[ci].z += (trueCams[ci].z - currentCams[ci].z) * lr;
+    }
+
+    // Update points
+    for (let pi = 0; pi < numPts; pi++) {
+        currentPts[pi].x += (truePts[pi].x - currentPts[pi].x) * lr;
+        currentPts[pi].y += (truePts[pi].y - currentPts[pi].y) * lr;
+        currentPts[pi].z += (truePts[pi].z - currentPts[pi].z) * lr;
+    }
+
+    currentIter++;
+    const err = computeError(currentCams, currentPts);
+    document.getElementById('iterNum').textContent = currentIter;
+    document.getElementById('afterError').textContent = err.toFixed(2) + 'px';
+    document.getElementById('reduction').textContent =
+        `-${((initError - err) / initError * 100).toFixed(1)}%`;
+
+    draw();
+}
+
+function resetBA() {
+    currentCams = JSON.parse(JSON.stringify(initCams));
+    currentPts = JSON.parse(JSON.stringify(initPts));
+    currentIter = 0;
+    document.getElementById('iterNum').textContent = '0';
+    document.getElementById('afterError').textContent = initError.toFixed(2) + 'px';
+    document.getElementById('reduction').textContent = '-';
+    draw();
+}
+
+function draw() {
+    const w = canvas.width / (window.devicePixelRatio || 1);
+    const h = canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0f0f1a'; ctx.fillRect(0, 0, w, h);
+
+    const margin = 50;
+    const plotW = w - 2 * margin;
+    const plotH = h - 2 * margin;
+
+    // Scale
+    function scaleX(x) { return margin + (x + 3) / 8 * plotW; }
+    function scaleY(y) { return margin + (1.5 - y / 2) * plotH; }
+
+    // Draw observations (rays from cameras to points)
+    const showOptimized = currentIter > 0;
+
+    // Draw rays (thin lines)
+    ctx.lineWidth = 0.8;
+    for (const o of obs) {
+        const cam = currentCams[o.ci];
+        const pt = currentPts[o.pi];
+        ctx.strokeStyle = currentIter >= maxIter ? '#51cf6620' : '#ff6b6b20';
+        ctx.beginPath();
+        ctx.moveTo(scaleX(cam.x), scaleY(cam.z));
+        ctx.lineTo(scaleX(pt.x), scaleY(pt.z));
+        ctx.stroke();
+    }
+
+    // Draw cameras
+    function drawCam(x, y, isOptimized) {
+        const size = 10;
+        ctx.fillStyle = isOptimized ? '#51cf66' : '#ff6b6b';
+        ctx.fillRect(x - size, y - size/2, size*2, size);
+        ctx.fillStyle = '#fff';
+        ctx.font = '7px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('📷', x, y + 3);
+    }
+
+    // Draw points
+    function drawPt(x, y, isOptimized) {
+        ctx.fillStyle = isOptimized ? '#51cf66' : '#ff6b6b';
+        ctx.globalAlpha = 0.6;
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, 2*Math.PI); ctx.fill();
+        ctx.globalAlpha = 1;
+    }
+
+    // Draw initial state (faded)
+    if (currentIter === 0) {
+        for (const c of initCams) drawCam(scaleX(c.x), scaleY(c.z), false);
+        for (const p of initPts) drawPt(scaleX(p.x), scaleY(p.z), false);
+    } else {
+        for (const c of initCams) {
+            ctx.globalAlpha = 0.2;
+            drawCam(scaleX(c.x), scaleY(c.z), false);
+            ctx.globalAlpha = 1;
+        }
+        for (const p of initPts) {
+            ctx.globalAlpha = 0.2;
+            drawPt(scaleX(p.x), scaleY(p.z), false);
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    // Draw current state
+    const fullyOptimized = currentIter >= maxIter;
+    for (const c of currentCams) drawCam(scaleX(c.x), scaleY(c.z), fullyOptimized);
+    for (const p of currentPts) drawPt(scaleX(p.x), scaleY(p.z), fullyOptimized);
+
+    // Draw true positions (reference)
+    ctx.globalAlpha = 0.15;
+    for (const p of truePts) {
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath(); ctx.arc(scaleX(p.x), scaleY(p.z), 3, 0, 2*Math.PI); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Legend
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ff6b6b80';
+    ctx.fillRect(20, h - 50, 12, 12);
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('优化前', 36, h - 39);
+    ctx.fillStyle = '#51cf6680';
+    ctx.fillRect(100, h - 50, 12, 12);
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('优化后', 116, h - 39);
+    ctx.fillStyle = '#fbbf2440';
+    ctx.fillRect(180, h - 50, 12, 12);
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('真值', 196, h - 39);
+
+    // Labels
+    ctx.fillStyle = '#4a4a7a';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('X', w - margin + 20, h - margin + 4);
+    ctx.fillText('Z (深度)', margin * 0.4, margin - 6);
+}
+
+document.getElementById('stepBtn').onclick = doBAIteration;
+document.getElementById('resetBtn').onclick = resetBA;
+
+draw();
+resetBA();
+
+window.addEventListener('resize', () => { resize(); draw(); });
+</script>
+</body>
+</html>
