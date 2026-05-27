@@ -1,0 +1,22 @@
+# GitHub Token (安全)
+ghp*.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 生成的结果
+videos/stereo_slam/output/
+2D-2D_results/
+
+# ROS bag 文件（体积大）
+*.bag
+
+# Windows 可执行文件/库
+*.exe
+*.dll
+*.lib
+
+# 压缩包
+*.zip
